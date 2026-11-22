@@ -56,3 +56,18 @@ Use **New project** to enter a title, project ID, category, location, year, desc
 **Publish to website** saves the draft and commits the selected project and cover to the frontend repository’s `main` branch. The commit preserves the other portfolio entries and site files. The dashboard links to the commit after it is accepted. Visitors see the change after the frontend deployment finishes.
 
 Publish projects from this workspace so the GitHub-backed portfolio file stays current. The existing enquiry Edge Function uses its own Airtable settings.
+
+
+## Ready-made plans
+
+Apply the ready-made plans migration with `supabase db push`, then deploy the `manage-plans` Edge Function. It uses the same Supabase admin accounts and `FRONTEND_GITHUB_TOKEN` as portfolio publishing. The new frontend build reads the published plan catalogue and its demo PDFs.
+
+```sh
+supabase functions deploy manage-plans --project-ref <project-ref>
+```
+
+- Open **Ready-made plans** in the admin navigation. Create a plan or edit an existing listing via **Website catalogue**.
+- Upload up to six public renders and an optional separate sample PDF. Upload the full drawing PDF in **Buyer-only download**. A published plan must have at least one render and a drawing PDF.
+- **Publish plan** sends the listing, renders and sample PDF to the frontend repository. The full PDF stays in Supabase’s private `private-plan-files` bucket.
+- The public checkout still sends an enquiry. After verifying payment outside the site, open **Download access**, enter the buyer’s email and payment reference, and issue a link. Copy it to the buyer. The link opens the admin host’s buyer download page and expires after seven days.
+- Admins can revoke an issued link from the plan. A storage URL already prepared by a buyer expires in at most 60 seconds. Existing links continue to point to the drawing revision purchased.

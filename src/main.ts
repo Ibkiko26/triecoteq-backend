@@ -1,4 +1,5 @@
 import "./styles.css";
+import { mountPlanAdmin, showBuyerDownload } from "./plan-admin";
 import {
   categories, coverExtensions, frontendRepository, frontendWebsite, maxCoverBytes, projectIdPattern,
   type DraftFields, type ProjectDraft, type PublishedProject
@@ -15,7 +16,7 @@ const emptyFields: DraftFields = {
 let drafts: ProjectDraft[] = [];
 let websiteProjects: PublishedProject[] = [];
 let email = "";
-let view: "workspace" | "website" = "workspace";
+let view: "workspace" | "website" | "plans" = "workspace";
 let filter = "";
 let search = "";
 let sessionVersion = 0;
@@ -137,13 +138,14 @@ function renderProjects(): void {
 
 function showWorkspace(message = ""): void {
   app.innerHTML = `
-    <a class="skip-link" href="#main">Skip to projects</a>
+    <a class="skip-link" href="#main">Skip to content</a>
     <div class="layout">
       <aside class="sidebar">
         ${logo()}
         <nav aria-label="Admin navigation">
           <button type="button" data-view="workspace" aria-pressed="${view === "workspace"}">Workspace</button>
           <button type="button" data-view="website" aria-pressed="${view === "website"}">Website portfolio</button>
+          <button type="button" data-view="plans" aria-pressed="${view === "plans"}">Ready-made plans</button>
         </nav>
         <div class="sidebar-bottom">
           <a href="${portfolioUrl}" target="_blank" rel="noopener noreferrer">View public portfolio</a>
@@ -151,8 +153,9 @@ function showWorkspace(message = ""): void {
         </div>
       </aside>
       <main id="main" class="main">
-        <header class="topbar"><p>Portfolio admin</p><span>${escape(email)}</span></header>
+        <header class="topbar"><p>Studio admin</p><span>${escape(email)}</span></header>
         <div class="content">
+          ${view === "plans" ? '<div data-plan-suite></div>' : `
           <div class="page-heading">
             <div><h1>${view === "workspace" ? "Portfolio projects" : "Website portfolio"}</h1>
               <p>${view === "workspace" ? "Save project drafts and publish them to the public portfolio." : "Open an existing website project to edit it in the workspace."}</p></div>
@@ -174,12 +177,29 @@ function showWorkspace(message = ""): void {
             </div>
             <div class="table-wrap" data-project-list></div>
           </section>
-          <p class="feedback" role="status" data-workspace-feedback></p>
+          <p class="feedback" role="status" data-workspace-feedback></p>`}
         </div>
       </main>
     </div>
     <dialog class="editor" aria-labelledby="editor-title" data-editor></dialog>`;
 
+  target("[data-sign-out]").addEventListener("click", async () => {
+    const { error } = await client!.auth.signOut();
+    if (error) setStatus("[data-workspace-feedback], [data-plan-feedback]", "Could not sign out. Try again.", true);
+  });
+  app.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => button.addEventListener("click", () => {
+    const next = button.dataset.view as typeof view;
+    if (next === view) return;
+    view = next;
+    filter = "";
+    search = "";
+    showWorkspace();
+    if (view === "website") void reload(false);
+  }));
+  if (view === "plans") {
+    mountPlanAdmin(target("[data-plan-suite]"));
+    return;
+  }
   renderProjects();
   if (message) setStatus("[data-workspace-feedback]", message);
   target<HTMLInputElement>("[data-search]").addEventListener("input", (event) => {
@@ -191,20 +211,7 @@ function showWorkspace(message = ""): void {
     renderProjects();
   });
   target("[data-new]").addEventListener("click", () => openEditor());
-  target("[data-sign-out]").addEventListener("click", async () => {
-    const { error } = await client!.auth.signOut();
-    if (error) setStatus("[data-workspace-feedback]", "Could not sign out. Try again.", true);
-  });
   target("[data-refresh]").addEventListener("click", () => reload(false));
-  app.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => button.addEventListener("click", () => {
-    const next = button.dataset.view as typeof view;
-    if (next === view) return;
-    view = next;
-    filter = "";
-    search = "";
-    showWorkspace();
-    if (view === "website") reload(false);
-  }));
   target("[data-project-list]").addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
     if (button?.dataset.edit) {
@@ -426,7 +433,10 @@ async function updateSession(): Promise<void> {
   }
 }
 
-if (!client) {
+const downloadToken = new URLSearchParams(window.location.hash.slice(1)).get("download");
+if (downloadToken !== null) {
+  showBuyerDownload(app, downloadToken);
+} else if (!client) {
   setupRequired();
 } else {
   app.innerHTML = '<main class="setup"><p role="status">Loading admin workspace…</p></main>';

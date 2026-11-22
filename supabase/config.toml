@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.publish-portfolio]
 verify_jwt = false
+
+[functions.manage-plans]
+verify_jwt = false

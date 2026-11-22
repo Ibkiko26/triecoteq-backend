@@ -9,7 +9,7 @@ interface Snapshot {
   [key: string]: unknown;
 }
 
-interface TreeEntry {
+export interface TreeEntry {
   path: string;
   mode: "100644";
   type: "blob";
@@ -29,7 +29,7 @@ class GithubError extends Error {
   }
 }
 
-function encodeCover(bytes: Uint8Array): string {
+function encodeFile(bytes: Uint8Array): string {
   const chunkSize = 12_288;
   const chunks: string[] = [];
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
@@ -58,17 +58,55 @@ export class FrontendRepository {
     return response.json();
   }
 
-  async snapshot(): Promise<{ head: string; data: Snapshot }> {
+  async head(): Promise<string> {
     const branch = await this.request<{ object: { sha: string } }>(`/git/ref/heads/${frontendBranch}`);
-    const head = branch.object.sha;
-    const file = await this.request<{ content: string; encoding: string }>(
-      `/contents/${portfolioFile}?ref=${head}`
-    );
+    return branch.object.sha;
+  }
+
+  async readJson<T>(path: string, ref: string): Promise<T> {
+    const file = await this.request<{ content: string; encoding: string }>(`/contents/${path}?ref=${ref}`);
     if (file.encoding !== "base64" || typeof file.content !== "string") {
-      throw new PublishError(502, "GitHub did not return the frontend portfolio file.");
+      throw new PublishError(502, "GitHub did not return the requested catalogue file.");
     }
     const bytes = Uint8Array.from(atob(file.content.replace(/\s/g, "")), (character) => character.charCodeAt(0));
-    const data: Snapshot = JSON.parse(new TextDecoder().decode(bytes));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  }
+
+  async blob(bytes: Uint8Array): Promise<string> {
+    const result = await this.request<{ sha: string }>("/git/blobs", "POST", {
+      content: encodeFile(bytes), encoding: "base64"
+    });
+    return result.sha;
+  }
+
+  async commitAt(
+    head: string,
+    tree: TreeEntry[],
+    message: string,
+    assertCurrent: () => Promise<void>
+  ): Promise<string | null> {
+    const parent = await this.request<{ tree: { sha: string } }>(`/git/commits/${head}`);
+    const nextTree = await this.request<{ sha: string }>("/git/trees", "POST", {
+      base_tree: parent.tree.sha, tree
+    });
+    const commit = await this.request<{ sha: string }>("/git/commits", "POST", {
+      message, parents: [head], tree: nextTree.sha
+    });
+    await assertCurrent();
+
+    try {
+      await this.request(`/git/refs/heads/${frontendBranch}`, "PATCH", { sha: commit.sha, force: false });
+      return commit.sha;
+    } catch (error) {
+      if (!(error instanceof GithubError) || ![409, 422].includes(error.status)) throw error;
+      if (await this.head() === head) throw error;
+      return null;
+    }
+  }
+
+  async snapshot(): Promise<{ head: string; data: Snapshot }> {
+    const head = await this.head();
+    const data = await this.readJson<Snapshot>(portfolioFile, head);
     if (!Array.isArray(data?.portfolioProjects) ||
       !data.portfolioProjects.every((project) => project && typeof project.id === "string")) {
       throw new PublishError(502, "The frontend portfolio file has an unexpected format.");
@@ -105,34 +143,12 @@ export class FrontendRepository {
       }];
 
       if (cover) {
-        if (!coverSha) {
-          const base64 = encodeCover(cover);
-          coverSha = (await this.request<{ sha: string }>("/git/blobs", "POST", {
-            content: base64, encoding: "base64"
-          })).sha;
-        }
+        coverSha ??= await this.blob(cover);
         tree.push({ path: project.image, mode: "100644", type: "blob", sha: coverSha });
       }
 
-      const parent = await this.request<{ tree: { sha: string } }>(`/git/commits/${head}`);
-      const nextTree = await this.request<{ sha: string }>("/git/trees", "POST", {
-        base_tree: parent.tree.sha, tree
-      });
-      const commit = await this.request<{ sha: string }>("/git/commits", "POST", {
-        message: `Publish portfolio project ${project.id}`,
-        parents: [head],
-        tree: nextTree.sha
-      });
-
-      await assertCurrent();
-      try {
-        await this.request(`/git/refs/heads/${frontendBranch}`, "PATCH", { sha: commit.sha, force: false });
-        return commit.sha;
-      } catch (error) {
-        if (!(error instanceof GithubError) || ![409, 422].includes(error.status)) throw error;
-        // Retry only when a different commit advanced the branch.
-        if ((await this.snapshot()).head === head) throw error;
-      }
+      const commit = await this.commitAt(head, tree, `Publish portfolio project ${project.id}`, assertCurrent);
+      if (commit) return commit;
     }
     throw new PublishError(409, "The frontend branch changed during publishing. Try again.");
   }

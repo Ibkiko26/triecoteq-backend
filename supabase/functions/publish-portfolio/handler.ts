@@ -15,12 +15,12 @@ function reply(status: number, data: unknown): Response {
   return Response.json(data, { status, headers });
 }
 
-function apiKey(kind: "PUBLISHABLE" | "SECRET", fallback: string): string | undefined {
+export function apiKey(kind: "PUBLISHABLE" | "SECRET", fallback: string): string | undefined {
   const keys = Deno.env.get(`SUPABASE_${kind}_KEYS`);
   return (keys ? JSON.parse(keys)?.default : undefined) || Deno.env.get(fallback);
 }
 
-async function authorise(request: Request): Promise<{ supabaseUrl: string; caller: Record<string, string> }> {
+export async function authorise(request: Request): Promise<{ supabaseUrl: string; caller: Record<string, string> }> {
   const jwt = request.headers.get("Authorization");
   if (!jwt?.startsWith("Bearer ")) throw new PublishError(401, "Sign in to the portfolio admin.");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -44,7 +44,7 @@ async function readDraft(supabaseUrl: string, caller: Record<string, string>, id
   return draft;
 }
 
-function isImage(bytes: Uint8Array, ext: string): boolean {
+export function isImage(bytes: Uint8Array, ext: string): boolean {
   if (ext === "jpg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (ext === "png") return [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value);
   return new TextDecoder().decode(bytes.subarray(0, 4)) === "RIFF" &&

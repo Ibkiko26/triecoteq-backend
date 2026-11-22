@@ -65,25 +65,25 @@ export async function saveDraft(
   return data as ProjectDraft;
 }
 
-async function invoke<T>(body: object): Promise<T> {
-  const { data, error } = await client!.functions.invoke<T>("publish-portfolio", { body });
+export async function invokeEdge<T>(name: string, body: object): Promise<T> {
+  const { data, error } = await client!.functions.invoke<T>(name, { body });
   if (error) {
     if (error instanceof FunctionsHttpError) {
       const result = await error.context.json().catch(() => null);
       if (typeof result?.error === "string") throw new Error(result.error);
     }
-    throw new Error("Could not reach the publishing service. Confirm the Edge Function is deployed.");
+    throw new Error("Could not reach the server. Confirm the Edge Function is deployed.");
   }
-  if (!data) throw new Error("The publishing service returned an empty response.");
+  if (!data) throw new Error("The server returned an empty response.");
   return data;
 }
 
 export async function listWebsiteProjects(): Promise<PublishedProject[]> {
-  const { projects } = await invoke<{ projects: PublishedProject[] }>({ action: "list" });
+  const { projects } = await invokeEdge<{ projects: PublishedProject[] }>("publish-portfolio", { action: "list" });
   return projects;
 }
 
 export async function publishDraft(draft: ProjectDraft): Promise<string> {
-  const { commit } = await invoke<{ commit: string }>({ action: "publish", id: draft.id, revision: draft.revision });
+  const { commit } = await invokeEdge<{ commit: string }>("publish-portfolio", { action: "publish", id: draft.id, revision: draft.revision });
   return commit;
 }
