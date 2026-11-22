@@ -13,7 +13,7 @@ Set these values in the Supabase project’s [Edge Function secrets](https://sup
 - `AIRTABLE_TABLE_ID` is the enquiry table ID.
 - `INQUIRY_ALLOWED_ORIGINS` is an optional, comma-separated list of exact website origins for direct browser requests. Requests from a server can omit the Origin header.
 
-The Airtable table needs the fields `Name`, `Email`, `Service`, and `Message`. Use single-line text for Name and Service, Email for Email, and long text for Message.
+The Airtable table needs `Name` (single-line text), `Email` (email), and `Message` (long text) fields. If the table has no `Service` field, set the `AIRTABLE_SERVICE_IN_MESSAGE` Edge Function secret to `true` to include the selected service in the message.
 
 Deploy the function from the repository root with the Supabase CLI.
 

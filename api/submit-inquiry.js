@@ -79,7 +79,13 @@ export async function submitInquiry(request) {
   const tableId = Deno.env.get("AIRTABLE_TABLE_ID")?.trim();
   if (!token || !baseId || !tableId) return reply(503, { error: unavailable });
 
-  const fields = { Name: name, Email: email, Service: service, Message: message };
+  const serviceInMessage = Deno.env.get("AIRTABLE_SERVICE_IN_MESSAGE")?.trim() === "true";
+  const fields = {
+    Name: name,
+    Email: email,
+    Message: service && serviceInMessage ? `Service: ${service}\n\n${message}` : message,
+    ...(service && !serviceInMessage ? { Service: service } : {})
+  };
   const url = `https://api.airtable.com/v0/${encodeURIComponent(baseId)}/${encodeURIComponent(tableId)}`;
 
   try {
