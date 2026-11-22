@@ -2,3 +2,6 @@ project_id = "triecoteq-backend"
 
 [functions.submit-inquiry]
 verify_jwt = false
+
+[functions.publish-portfolio]
+verify_jwt = false
