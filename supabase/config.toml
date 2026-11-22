@@ -1,0 +1,4 @@
+project_id = "triecoteq-backend"
+
+[functions.submit-inquiry]
+verify_jwt = false
