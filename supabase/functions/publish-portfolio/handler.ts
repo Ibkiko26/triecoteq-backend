@@ -100,12 +100,17 @@ export async function handlePortfolioRequest(request: Request): Promise<Response
     const raw = await request.text();
     if (raw.length > 2048) throw new PublishError(413, "The publish request is too large.");
     const body = JSON.parse(raw);
-    if (body?.action === "list") return reply(200, { projects: await listPublishedProjects() });
+    const token = Deno.env.get("FRONTEND_GITHUB_TOKEN");
+    if (body?.action === "list") {
+      const projects = token
+        ? (await new FrontendRepository(token).snapshot()).data.portfolioProjects
+        : await listPublishedProjects();
+      return reply(200, { projects });
+    }
     if (body?.action !== "publish" || typeof body.id !== "string" || !draftIdPattern.test(body.id) || !Number.isSafeInteger(body.revision)) {
       throw new PublishError(400, "Choose a saved draft to publish.");
     }
 
-    const token = Deno.env.get("FRONTEND_GITHUB_TOKEN");
     if (!token) throw new PublishError(503, "Set FRONTEND_GITHUB_TOKEN in the Supabase Edge Function secrets.");
     const github = new FrontendRepository(token);
 

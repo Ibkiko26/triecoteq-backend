@@ -289,7 +289,11 @@ export async function handlePlansRequest(request: Request): Promise<Response> {
     }
     const db = await authorise(request);
     if (body?.action === "list") {
-      const plans = await readPublishedJson<PublicPlan[]>(plansFile);
+      const token = Deno.env.get("FRONTEND_GITHUB_TOKEN");
+      const github = token ? new FrontendRepository(token) : undefined;
+      const plans = github
+        ? await github.readJson<PublicPlan[]>(plansFile, await github.head())
+        : await readPublishedJson<PublicPlan[]>(plansFile);
       return reply(200, { plans: validatePublicPlans(plans) });
     }
     if (body?.action === "revoke" && typeof body.id === "string" && draftIdPattern.test(body.id)) {
