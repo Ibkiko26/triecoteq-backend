@@ -287,7 +287,7 @@ export async function handlePlansRequest(request: Request): Promise<Response> {
     if (body?.action === "redeem") {
       return await redeem(typeof body.token === "string" ? body.token : "");
     }
-    const db = await authorise(request);
+    const db = await authorise(request, "plans");
     if (body?.action === "list") {
       const token = Deno.env.get("FRONTEND_GITHUB_TOKEN");
       const github = token ? new FrontendRepository(token) : undefined;

@@ -5,7 +5,7 @@ import {
   categories, coverExtensions, frontendRepository, frontendWebsite, maxCoverBytes, projectIdPattern,
   type DraftFields, type ProjectDraft, type PublishedProject
 } from "../shared/portfolio";
-import { client, isAdmin, listDrafts, listWebsiteProjects, loadCover, publicCover, publishDraft, saveDraft } from "./backend";
+import { client, hasPlansAccess, isAdmin, listDrafts, listWebsiteProjects, loadCover, publicCover, publishDraft, saveDraft } from "./backend";
 
 const app = document.querySelector<HTMLElement>("#app")!;
 const themeStorageKey = "teq-studio-theme";
@@ -22,6 +22,7 @@ let drafts: ProjectDraft[] = [];
 let websiteProjects: PublishedProject[] = [];
 let email = "";
 let view: "workspace" | "website" | "plans" = "workspace";
+let canAccessPlans = false;
 let filter = "";
 let search = "";
 let sessionVersion = 0;
@@ -168,7 +169,7 @@ function showWorkspace(message = ""): void {
         <nav aria-label="Admin navigation">
           <button type="button" data-view="workspace" aria-pressed="${view === "workspace"}">Workspace</button>
           <button type="button" data-view="website" aria-pressed="${view === "website"}">Published portfolio</button>
-          <button type="button" data-view="plans" aria-pressed="${view === "plans"}">Ready-made plans</button>
+          ${canAccessPlans ? `<button type="button" data-view="plans" aria-pressed="${view === "plans"}">Ready-made plans</button>` : ""}
         </nav>
         <div class="sidebar-bottom">
           <a href="${portfolioUrl}" target="_blank" rel="noopener noreferrer">View public portfolio</a>
@@ -432,6 +433,7 @@ async function updateSession(): Promise<void> {
   if (!data.session) {
     drafts = [];
     websiteProjects = [];
+    canAccessPlans = false;
     view = "workspace";
     filter = "";
     search = "";
@@ -440,7 +442,7 @@ async function updateSession(): Promise<void> {
     return;
   }
   try {
-    const allowed = await isAdmin();
+    const [allowed, plansAllowed] = await Promise.all([isAdmin(), hasPlansAccess()]);
     if (version !== sessionVersion) return;
     if (!allowed) {
       loginNotice = "This account does not have portfolio admin access.";
@@ -448,6 +450,8 @@ async function updateSession(): Promise<void> {
       if (error) showLogin(loginNotice);
       return;
     }
+    canAccessPlans = plansAllowed;
+    if (!canAccessPlans && view === "plans") view = "workspace";
     email = data.session.user.email ?? "Portfolio administrator";
     showWorkspace();
     await reload(true);

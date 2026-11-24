@@ -21,6 +21,11 @@ export async function isAdmin(): Promise<boolean> {
   return data === true;
 }
 
+export async function hasPlansAccess(): Promise<boolean> {
+  const { data, error } = await client!.rpc("can_manage_plans");
+  return !error && data === true;
+}
+
 export async function listDrafts(): Promise<ProjectDraft[]> {
   const { data, error } = await client!.from("portfolio_drafts").select("*").order("updated_at", { ascending: false });
   if (error) throw new Error("Could not load saved projects. Check your connection and try again.");

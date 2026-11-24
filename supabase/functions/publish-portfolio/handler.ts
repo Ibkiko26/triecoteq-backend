@@ -20,19 +20,25 @@ export function apiKey(kind: "PUBLISHABLE" | "SECRET", fallback: string): string
   return (keys ? JSON.parse(keys)?.default : undefined) || Deno.env.get(fallback);
 }
 
-export async function authorise(request: Request): Promise<{ supabaseUrl: string; caller: Record<string, string> }> {
+export async function authorise(
+  request: Request, area: "portfolio" | "plans" = "portfolio"
+): Promise<{ supabaseUrl: string; caller: Record<string, string> }> {
   const jwt = request.headers.get("Authorization");
   if (!jwt?.startsWith("Bearer ")) throw new PublishError(401, "Sign in to the portfolio admin.");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const key = apiKey("PUBLISHABLE", "SUPABASE_ANON_KEY");
   if (!supabaseUrl || !key) throw new PublishError(503, "Supabase is missing its API configuration.");
   const caller = { apikey: key, Authorization: jwt };
-  const access = await fetch(`${supabaseUrl}/rest/v1/rpc/is_portfolio_admin`, {
+  const permission = area === "plans" ? "can_manage_plans" : "is_portfolio_admin";
+  const access = await fetch(`${supabaseUrl}/rest/v1/rpc/${permission}`, {
     method: "POST", headers: { ...caller, "Content-Type": "application/json" }, body: "{}"
   });
   if (access.status === 401) throw new PublishError(401, "Your session expired. Sign in again.");
-  if (access.status === 404) throw new PublishError(503, "Apply the portfolio admin database migration.");
-  if (!access.ok || await access.json() !== true) throw new PublishError(403, "This account does not have portfolio admin access.");
+  if (access.status === 404) throw new PublishError(503, "Apply the studio admin database migrations.");
+  if (!access.ok || await access.json() !== true) {
+    const section = area === "plans" ? "Ready-made plans" : "portfolio admin";
+    throw new PublishError(403, `This account does not have ${section} access.`);
+  }
   return { supabaseUrl, caller };
 }
 

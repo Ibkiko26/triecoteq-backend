@@ -38,7 +38,7 @@ where lower(email) = lower('admin@example.com')
 on conflict do nothing;
 ```
 
-Use the administrator’s email in the query. Remove their row from `portfolio_admins` to revoke workspace access.
+Use the administrator’s email in the query. New members receive portfolio access by default. Set `can_manage_plans` to `true` on their `portfolio_admins` row to grant access to Ready-made plans. Remove their row to revoke workspace access.
 
 3. In [Edge Function secrets](https://supabase.com/docs/guides/functions/secrets), set `FRONTEND_GITHUB_TOKEN` to a GitHub fine-grained token restricted to `Ibkiko26/triecoteq-frontend` with **Contents: Read and write**.
 4. Deploy the `publish-portfolio` Edge Function.
@@ -60,7 +60,7 @@ Publish projects from this workspace so the GitHub-backed portfolio file stays c
 
 ## Ready-made plans
 
-Apply the ready-made plans migration with `supabase db push`, then deploy the `manage-plans` Edge Function. It uses the same Supabase admin accounts and `FRONTEND_GITHUB_TOKEN` as portfolio publishing. The new frontend build reads the published plan catalogue and its demo PDFs.
+Apply the ready-made plans migration with `supabase db push`, then deploy the `manage-plans` Edge Function. Plan administrators sign in with Supabase and need `can_manage_plans` enabled. Publishing uses the same `FRONTEND_GITHUB_TOKEN` as portfolio publishing. The new frontend build reads the published plan catalogue and its demo PDFs.
 
 ```sh
 supabase functions deploy manage-plans --project-ref <project-ref>
