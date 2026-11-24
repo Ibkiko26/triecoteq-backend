@@ -116,7 +116,7 @@ function websiteRows(projects: PublishedProject[]): string {
       <td><strong>${escape(project.title)}</strong><small>${escape(project.id)}</small></td>
       <td>${escape(project.category)}</td>
       <td>${escape(project.location)}</td>
-      <td><span class="status" data-status="Published">On website</span></td>
+      <td><span class="status" data-status="Live">Live</span></td>
       <td><button class="link-button" type="button" data-import="${escape(project.id)}" aria-label="Edit website project ${escape(project.title)}">Edit</button></td>
     </tr>`).join("");
 }

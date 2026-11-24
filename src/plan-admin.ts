@@ -70,7 +70,7 @@ export function mountPlanAdmin(root: HTMLElement): void {
     const query = search.toLowerCase().trim();
     const matching = (title: string, id: string) => (title + " " + id).toLowerCase().includes(query);
     const items = website ? published.filter(({ title, id }) => matching(title, id)).map((plan) => ({
-      title: plan.title, planId: plan.id, price: plan.currentPrice, status: "On website",
+      title: plan.title, planId: plan.id, price: plan.currentPrice, status: "Live",
       edit: `data-import-plan="${escape(plan.id)}"`, access: ""
     })) : plans.filter(({ title, plan_id }) => matching(title, plan_id)).map((plan) => ({
       title: plan.title, planId: plan.plan_id, price: plan.current_price, status: state(plan),

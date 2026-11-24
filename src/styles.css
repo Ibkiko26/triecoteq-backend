@@ -145,7 +145,7 @@ td { font-size: .9rem; }
 td small { display: block; color: var(--muted); margin-top: .2rem; }
 tr:last-child td { border-bottom: 0; }
 .status { display: inline-block; padding: .24rem .55rem; border-radius: .3rem; background: #ecedef; color: #354438; font-size: .8rem; font-weight: 600; }
-.status[data-status="Published"] { background: #e3eee5; color: #244d33; }
+.status[data-status="Live"], .status[data-status="Published"] { background: #e3eee5; color: #244d33; }
 .status[data-status="Unpublished changes"] { background: #f6e8d7; color: #734719; }
 .empty { min-height: 10rem; display: grid; place-items: center; padding: 1rem; color: var(--muted); text-align: center; }
 .editor { width: min(46rem, calc(100% - 1.25rem)); max-height: calc(100svh - 1.5rem); padding: clamp(1rem, 3vw, 1.8rem); border: 1px solid var(--line); border-radius: .7rem; color: var(--forest); background: var(--paper); }
