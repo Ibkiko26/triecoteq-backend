@@ -4,7 +4,7 @@ import {
   type PlanDraft, type PlanFields, type PlanGrant, type PublicPlan
 } from "../shared/plans";
 import {
-  issuePlanLink, livePlans, loadPlans, previewRenders, publishPlan, readGrants,
+  issuePlanLink, livePlans, loadPlanDraft, loadPlans, previewRenders, publishPlan, readGrants,
   redeemPlanLink, revokePlanLink, savePlan, type PlanFiles
 } from "./plan-api";
 import { client } from "./backend";
@@ -39,7 +39,7 @@ function dates(end: string): string {
 export function mountPlanAdmin(root: HTMLElement): void {
   let plans: PlanDraft[] = [];
   let published: PublicPlan[] = [];
-  let website = false;
+  let website = true;
   let search = "";
   let request = 0;
 
@@ -49,7 +49,8 @@ export function mountPlanAdmin(root: HTMLElement): void {
     <section class="project-panel" aria-label="Ready-made plans">
       <div class="toolbar">
         <label class="search"><span class="sr-only">Search plans</span><input type="search" data-plan-search placeholder="Search title or plan ID" /></label>
-        <button class="button button-secondary" type="button" data-plan-website aria-pressed="false">Website catalogue</button>
+        <button class="button" type="button" data-plan-view="website" aria-pressed="true">Website catalogue</button>
+        <button class="button button-secondary" type="button" data-plan-view="drafts" aria-pressed="false">Drafts</button>
         <button class="button button-secondary" type="button" data-plan-refresh>Refresh</button>
       </div>
       <div class="table-wrap" data-plan-list></div>
@@ -61,7 +62,7 @@ export function mountPlanAdmin(root: HTMLElement): void {
   const list = root.querySelector<HTMLElement>("[data-plan-list]")!;
   const editor = root.querySelector<HTMLDialogElement>("[data-plan-editor]")!;
   const access = root.querySelector<HTMLDialogElement>("[data-plan-access]")!;
-  const toggle = root.querySelector<HTMLButtonElement>("[data-plan-website]")!;
+  const views = root.querySelectorAll<HTMLButtonElement>("[data-plan-view]");
   const refresh = root.querySelector<HTMLButtonElement>("[data-plan-refresh]")!;
 
   function render(): void {
@@ -82,7 +83,17 @@ export function mountPlanAdmin(root: HTMLElement): void {
       <tbody>${items.map((item) => `<tr><td><strong>${escape(item.title)}</strong><small>${escape(item.planId)}</small></td>
       <td>${formatter.format(item.price)}</td><td><span class="status" data-status="${item.status}">${item.status}</span></td>
       <td><div class="plan-row-actions"><button class="link-button" type="button" ${item.edit} aria-label="Edit ${escape(item.title)}">Edit</button>${item.access}</div></td></tr>`).join("")}</tbody></table>`
-      : `<div class="empty"><p>${query ? "No plans match your search." : "Plans will appear here."}</p></div>`;
+      : `<div class="empty"><p>${query ? "No plans match your search." : website ? "No published plans to edit." : "Saved drafts will appear here."}</p></div>`;
+  }
+
+  function setView(showWebsite: boolean): void {
+    website = showWebsite;
+    for (const button of views) {
+      const selected = (button.dataset.planView === "website") === website;
+      button.setAttribute("aria-pressed", String(selected));
+      button.classList.toggle("button-secondary", !selected);
+    }
+    render();
   }
 
   async function reload(notice = ""): Promise<void> {
@@ -246,8 +257,7 @@ export function mountPlanAdmin(root: HTMLElement): void {
         fileState();
         if (publish) await publishPlan(saved);
         editor.close();
-        website = false;
-        toggle.setAttribute("aria-pressed", "false");
+        setView(false);
         await reload(publish ? "Plan published to the frontend repository." : "Plan draft saved.");
       } catch (error) {
         note(editor, "[data-plan-editor-feedback]", message(error), true);
@@ -361,17 +371,19 @@ export function mountPlanAdmin(root: HTMLElement): void {
 
   root.querySelector("[data-new-plan]")!.addEventListener("click", () => openEditor());
   refresh.addEventListener("click", () => void reload());
-  toggle.addEventListener("click", () => {
-    website = !website;
-    toggle.setAttribute("aria-pressed", String(website));
-    render();
-    void reload();
-  });
+  for (const button of views) {
+    button.addEventListener("click", () => {
+      const showWebsite = button.dataset.planView === "website";
+      if (showWebsite === website) return;
+      setView(showWebsite);
+      void reload();
+    });
+  }
   root.querySelector("[data-plan-search]")!.addEventListener("input", (event) => {
     search = (event.target as HTMLInputElement).value;
     render();
   });
-  list.addEventListener("click", (event) => {
+  list.addEventListener("click", async (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
     if (!button) return;
     const existing = plans.find((plan) => plan.id === (button.dataset.editPlan ?? button.dataset.accessPlan));
@@ -380,9 +392,15 @@ export function mountPlanAdmin(root: HTMLElement): void {
     else if (button.dataset.importPlan) {
       const original = published.find(({ id }) => id === button.dataset.importPlan);
       if (!original) return;
-      const prior = plans.find(({ plan_id }) => plan_id === original.id);
-      if (prior) openEditor(prior);
-      else openEditor(null, original);
+      button.disabled = true;
+      try {
+        const draft = await loadPlanDraft(original.id);
+        if (button.isConnected && !editor.open) openEditor(draft, original);
+      } catch (error) {
+        if (button.isConnected) note(root, "[data-plan-feedback]", message(error), true);
+      } finally {
+        button.disabled = false;
+      }
     }
   });
   render();

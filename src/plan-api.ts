@@ -14,6 +14,12 @@ export async function loadPlans(): Promise<PlanDraft[]> {
   return data as PlanDraft[];
 }
 
+export async function loadPlanDraft(planId: string): Promise<PlanDraft | null> {
+  const { data, error } = await client!.from("plan_drafts").select("*").eq("plan_id", planId).maybeSingle();
+  if (error) throw new Error("Could not open the plan draft. Try again.");
+  return data as PlanDraft | null;
+}
+
 async function upload(id: string, kind: "renders" | "demo" | "drawings", file: File): Promise<string> {
   const extension = kind === "renders" ? coverExtensions[file.type as keyof typeof coverExtensions] : "pdf";
   const path = `${id}/${kind}/${crypto.randomUUID()}.${extension}`;
