@@ -1,4 +1,5 @@
 import "./styles.css";
+import studioLogo from "./assets/tri-ecoteq-architects-logo.png";
 import { mountPlanAdmin, showBuyerDownload } from "./plan-admin";
 import {
   categories, coverExtensions, frontendRepository, frontendWebsite, maxCoverBytes, projectIdPattern,
@@ -7,6 +8,10 @@ import {
 import { client, isAdmin, listDrafts, listWebsiteProjects, loadCover, publicCover, publishDraft, saveDraft } from "./backend";
 
 const app = document.querySelector<HTMLElement>("#app")!;
+const themeStorageKey = "teq-studio-theme";
+const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+type Theme = "light" | "dark";
+let preferredTheme = readTheme();
 const portfolioUrl = `${frontendWebsite}/portfolio.html`;
 const commitUrl = `https://github.com/${frontendRepository}/commit/`;
 const emptyFields: DraftFields = {
@@ -44,18 +49,36 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
 
-function logo(): string {
-  return `<a class="brand" href="${frontendWebsite}" target="_blank" rel="noopener noreferrer">
-    <span class="brand-mark" aria-hidden="true">TE</span>
-    <span>Tri-EcoTeq <small>ARCHITECTS</small></span>
-  </a>`;
+function readTheme(): Theme | null {
+  try {
+    const stored = window.localStorage.getItem(themeStorageKey);
+    return stored === "light" || stored === "dark" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyTheme(theme: Theme): void {
+  document.documentElement.dataset.theme = theme;
+  app.querySelector("[data-theme-toggle]")?.setAttribute("aria-pressed", String(theme === "dark"));
+}
+
+function brandHeader(): string {
+  const isDark = document.documentElement.dataset.theme === "dark";
+  return `<div class="brand-header">
+    <a class="brand" href="${frontendWebsite}" target="_blank" rel="noopener noreferrer">
+      <img class="brand-logo" src="${studioLogo}" alt="" width="620" height="403" />
+      <span>Tri-EcoTeq <small>ARCHITECTS</small></span>
+    </a>
+    <button class="theme-toggle" type="button" data-theme-toggle aria-label="Theme (dark mode)" aria-pressed="${isDark}">Theme</button>
+  </div>`;
 }
 
 function showLogin(message = ""): void {
   clearEditor();
   app.innerHTML = `
     <main class="login-layout">
-      <div class="login-brand">${logo()}<div><p class="section-label">Studio workspace</p><h1>Portfolio<br /><em>administration</em></h1></div></div>
+      <div class="login-brand">${brandHeader()}<div><p class="section-label">Studio workspace</p><h1>Portfolio<br /><em>administration</em></h1></div></div>
       <section class="login-card" aria-labelledby="login-title">
         <h2 id="login-title">Admin sign-in</h2>
         <form data-login>
@@ -91,7 +114,7 @@ function showLogin(message = ""): void {
 }
 
 function setupRequired(): void {
-  app.innerHTML = `<main class="setup">${logo()}<h1>Connect the admin</h1><p>Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY, then rebuild the site.</p></main>`;
+  app.innerHTML = `<main class="setup">${brandHeader()}<h1>Connect the admin</h1><p>Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY, then rebuild the site.</p></main>`;
 }
 
 function statusOf(draft: ProjectDraft): "Draft" | "Published" | "Unpublished changes" {
@@ -141,7 +164,7 @@ function showWorkspace(message = ""): void {
     <a class="skip-link" href="#main">Skip to content</a>
     <div class="layout">
       <aside class="sidebar">
-        ${logo()}
+        ${brandHeader()}
         <nav aria-label="Admin navigation">
           <button type="button" data-view="workspace" aria-pressed="${view === "workspace"}">Workspace</button>
           <button type="button" data-view="website" aria-pressed="${view === "website"}">Website portfolio</button>
@@ -432,6 +455,22 @@ async function updateSession(): Promise<void> {
     if (version === sessionVersion) showLogin(errorMessage(error));
   }
 }
+
+applyTheme(preferredTheme ?? (systemTheme.matches ? "dark" : "light"));
+systemTheme.addEventListener("change", ({ matches }) => {
+  if (preferredTheme === null) applyTheme(matches ? "dark" : "light");
+});
+app.addEventListener("click", (event) => {
+  if (!(event.target instanceof Element) || !event.target.closest("[data-theme-toggle]")) return;
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  preferredTheme = next;
+  applyTheme(next);
+  try {
+    window.localStorage.setItem(themeStorageKey, next);
+  } catch {
+    // The selected theme still applies for the current page.
+  }
+});
 
 const downloadToken = new URLSearchParams(window.location.hash.slice(1)).get("download");
 if (downloadToken !== null) {
