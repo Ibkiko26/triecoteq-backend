@@ -140,7 +140,7 @@ function websiteRows(projects: PublishedProject[]): string {
       <td>${escape(project.category)}</td>
       <td>${escape(project.location)}</td>
       <td><span class="status" data-status="Live">Live</span></td>
-      <td><button class="link-button" type="button" data-import="${escape(project.id)}" aria-label="Edit website project ${escape(project.title)}">Edit</button></td>
+      <td><button class="link-button" type="button" data-import="${escape(project.id)}" aria-label="Edit published project ${escape(project.title)}">Edit</button></td>
     </tr>`).join("");
 }
 
@@ -156,7 +156,7 @@ function renderProjects(): void {
 
   list.innerHTML = rows
     ? `<table><thead><tr><th scope="col">Project</th><th scope="col">Category</th><th scope="col">Location</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody></table>`
-    : `<div class="empty"><p>${query || filter ? "No projects match your filters." : view === "website" ? "Load the website portfolio to edit an existing project." : "Your saved projects will appear here."}</p></div>`;
+    : `<div class="empty"><p>${query || filter ? "No projects match your filters." : view === "website" ? "No published projects to edit." : "Your saved projects will appear here."}</p></div>`;
 }
 
 function showWorkspace(message = ""): void {
@@ -167,7 +167,7 @@ function showWorkspace(message = ""): void {
         ${brandHeader()}
         <nav aria-label="Admin navigation">
           <button type="button" data-view="workspace" aria-pressed="${view === "workspace"}">Workspace</button>
-          <button type="button" data-view="website" aria-pressed="${view === "website"}">Website portfolio</button>
+          <button type="button" data-view="website" aria-pressed="${view === "website"}">Published portfolio</button>
           <button type="button" data-view="plans" aria-pressed="${view === "plans"}">Ready-made plans</button>
         </nav>
         <div class="sidebar-bottom">
@@ -180,8 +180,8 @@ function showWorkspace(message = ""): void {
         <div class="content">
           ${view === "plans" ? '<div data-plan-suite></div>' : `
           <div class="page-heading">
-            <div><h1>${view === "workspace" ? "Portfolio projects" : "Website portfolio"}</h1>
-              <p>${view === "workspace" ? "Save project drafts and publish them to the public portfolio." : "Open an existing website project to edit it in the workspace."}</p></div>
+            <div><h1>${view === "workspace" ? "Portfolio projects" : "Published portfolio"}</h1>
+              <p>${view === "workspace" ? "Save project drafts and publish them to the public portfolio." : "Open an existing published project to edit it in the workspace."}</p></div>
             <button class="button" type="button" data-new>New project</button>
           </div>
           ${view === "workspace" ? `<dl class="stats">
@@ -295,7 +295,7 @@ function openEditor(existing: ProjectDraft | null = null, original: PublishedPro
   const dialog = target<HTMLDialogElement>("[data-editor]");
   dialog.innerHTML = `
     <div class="editor-heading"><div><h2 id="editor-title">${existing || original ? "Edit project" : "New project"}</h2>
-      <p>${original ? "Save a draft to start editing this website project." : "Enter the details shown in the public portfolio."}</p></div>
+      <p>${original ? "Save a draft to start editing this published project." : "Enter the details shown in the public portfolio."}</p></div>
       <button class="link-button" type="button" data-close aria-label="Close editor">Close</button>
     </div>
     <form data-editor-form>

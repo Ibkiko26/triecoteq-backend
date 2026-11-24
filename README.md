@@ -51,7 +51,7 @@ The function verifies the signed-in user’s admin membership before using the G
 
 ### Edit and publish projects
 
-Use **New project** to enter a title, project ID, category, location, year, description and optional price label. Save a draft with a private JPEG, PNG or WebP cover up to 5 MB. To edit a project already on the public site, open **Website portfolio** and select **Edit**.
+Use **New project** to enter a title, project ID, category, location, year, description and optional price label. Save a draft with a private JPEG, PNG or WebP cover up to 5 MB. To edit a project already on the public site, open **Published portfolio** and select **Edit**.
 
 **Publish to website** saves the draft and commits the selected project and cover to the frontend repository’s `main` branch. The commit preserves the other portfolio entries and site files. The dashboard links to the commit after it is accepted. Visitors see the change after the frontend deployment finishes.
 
