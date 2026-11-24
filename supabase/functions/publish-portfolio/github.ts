@@ -23,6 +23,29 @@ export class PublishError extends Error {
   }
 }
 
+export async function readPublishedJson<T>(path: string): Promise<T> {
+  const response = await fetch(`https://raw.githubusercontent.com/${frontendRepository}/${frontendBranch}/${path}`, {
+    redirect: "error",
+    signal: AbortSignal.timeout(12_000)
+  });
+  if (!response.ok) throw new PublishError(502, "Could not load the published website catalogue.");
+  return response.json().catch(() => {
+    throw new PublishError(502, "The published website catalogue could not be read.");
+  });
+}
+
+function validatePortfolio(data: Snapshot): Snapshot {
+  if (!Array.isArray(data?.portfolioProjects) ||
+    !data.portfolioProjects.every((project) => project && typeof project.id === "string")) {
+    throw new PublishError(502, "The frontend portfolio file has an unexpected format.");
+  }
+  return data;
+}
+
+export async function listPublishedProjects(): Promise<PublishedProject[]> {
+  return validatePortfolio(await readPublishedJson<Snapshot>(portfolioFile)).portfolioProjects;
+}
+
 class GithubError extends Error {
   constructor(public status: number, public operation: string) {
     super("GitHub API request failed");
@@ -106,11 +129,7 @@ export class FrontendRepository {
 
   async snapshot(): Promise<{ head: string; data: Snapshot }> {
     const head = await this.head();
-    const data = await this.readJson<Snapshot>(portfolioFile, head);
-    if (!Array.isArray(data?.portfolioProjects) ||
-      !data.portfolioProjects.every((project) => project && typeof project.id === "string")) {
-      throw new PublishError(502, "The frontend portfolio file has an unexpected format.");
-    }
+    const data = validatePortfolio(await this.readJson<Snapshot>(portfolioFile, head));
     return { head, data };
   }
 

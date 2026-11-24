@@ -2,7 +2,7 @@ import {
   coverBucket, draftIdPattern, maxCoverBytes, projectIdPattern, projectImagePath,
   publishedData, type ProjectDraft
 } from "../../../shared/portfolio.ts";
-import { FrontendRepository, PublishError } from "./github.ts";
+import { FrontendRepository, listPublishedProjects, PublishError } from "./github.ts";
 
 const headers = {
   "Access-Control-Allow-Origin": "*",
@@ -97,17 +97,17 @@ export async function handlePortfolioRequest(request: Request): Promise<Response
 
   try {
     const { supabaseUrl, caller } = await authorise(request);
-    const token = Deno.env.get("FRONTEND_GITHUB_TOKEN");
-    if (!token) throw new PublishError(503, "Set FRONTEND_GITHUB_TOKEN in the Supabase Edge Function secrets.");
-    const github = new FrontendRepository(token);
-
     const raw = await request.text();
     if (raw.length > 2048) throw new PublishError(413, "The publish request is too large.");
     const body = JSON.parse(raw);
-    if (body?.action === "list") return reply(200, { projects: (await github.snapshot()).data.portfolioProjects });
+    if (body?.action === "list") return reply(200, { projects: await listPublishedProjects() });
     if (body?.action !== "publish" || typeof body.id !== "string" || !draftIdPattern.test(body.id) || !Number.isSafeInteger(body.revision)) {
       throw new PublishError(400, "Choose a saved draft to publish.");
     }
+
+    const token = Deno.env.get("FRONTEND_GITHUB_TOKEN");
+    if (!token) throw new PublishError(503, "Set FRONTEND_GITHUB_TOKEN in the Supabase Edge Function secrets.");
+    const github = new FrontendRepository(token);
 
     const draft = await readDraft(supabaseUrl, caller, body.id);
     if (draft.revision !== body.revision) throw new PublishError(409, "Another admin saved changes. Reopen the project before publishing.");

@@ -4,7 +4,7 @@ import {
   previewBytes, privatePlanPath, publicDemo, publicRender, type PlanDraft, type PublicPlan
 } from "../../../shared/plans.ts";
 import { apiKey, authorise, isImage } from "../publish-portfolio/handler.ts";
-import { FrontendRepository, PublishError, type TreeEntry } from "../publish-portfolio/github.ts";
+import { FrontendRepository, PublishError, readPublishedJson, type TreeEntry } from "../publish-portfolio/github.ts";
 
 const headers = {
   "Access-Control-Allow-Origin": "*",
@@ -57,8 +57,7 @@ async function readDraft(db: Database, id: string): Promise<PlanDraft> {
   return draft;
 }
 
-async function publicPlans(github: FrontendRepository, head: string): Promise<PublicPlan[]> {
-  const plans = await github.readJson<PublicPlan[]>(plansFile, head);
+function validatePublicPlans(plans: PublicPlan[]): PublicPlan[] {
   if (!Array.isArray(plans) || plans.some((plan) => !plan || typeof plan.id !== "string")) {
     throw new PublishError(502, "The frontend plan catalogue has an unexpected format.");
   }
@@ -185,7 +184,7 @@ async function publish(draft: PlanDraft, db: Database): Promise<string> {
   for (let attempt = 0; attempt < 3 && !commit; attempt++) {
     await assertCurrent();
     const head = await github.head();
-    const plans = await publicPlans(github, head);
+    const plans = validatePublicPlans(await github.readJson<PublicPlan[]>(plansFile, head));
     const index = plans.findIndex(({ id }) => id.toLowerCase() === plan.id.toLowerCase());
     const existing = index >= 0 ? plans[index] : undefined;
     if (plan.offer && plans.some((item) => item.offer && item.id !== plan.id)) {
@@ -290,8 +289,8 @@ export async function handlePlansRequest(request: Request): Promise<Response> {
     }
     const db = await authorise(request);
     if (body?.action === "list") {
-      const github = repository();
-      return reply(200, { plans: await publicPlans(github, await github.head()) });
+      const plans = await readPublishedJson<PublicPlan[]>(plansFile);
+      return reply(200, { plans: validatePublicPlans(plans) });
     }
     if (body?.action === "revoke" && typeof body.id === "string" && draftIdPattern.test(body.id)) {
       const result = await table(privileged(), `plan_download_grants?id=eq.${body.id}&revoked_at=is.null`,
