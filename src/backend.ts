@@ -41,6 +41,20 @@ export async function previewProjectImages(draft: ProjectDraft | null, original:
   return [...urls, ...(data?.flatMap(({ signedUrl }) => signedUrl ? [signedUrl] : []) ?? [])];
 }
 
+export function draftSaveError(error: { code: string } | null, status: number, item: "project" | "plan"): Error {
+  if (!error) return new Error(`Another admin saved changes to this ${item}. Reopen it and try again.`);
+  if (error.code === "23505") return new Error(`That ${item} ID is already in the workspace.`);
+  if (["PGRST204", "PGRST205", "42703", "42P01"].includes(error.code)) {
+    return new Error("The Supabase database is missing an admin update. Apply the gallery migration before saving.");
+  }
+  if (status === 401) return new Error("Your session expired. Sign in again and retry.");
+  if (status === 403 || error.code === "42501") return new Error(`Your account or the database permissions do not allow saving this ${item}.`);
+  if (error.code === "23514") return new Error(`The database rejected one of the ${item} fields. Check the ID, details and number of images.`);
+  if (status === 0 || status >= 500) return new Error("The database is temporarily unavailable. Try saving again.");
+  const reference = /^[A-Z0-9]+$/.test(error.code) ? ` (${error.code})` : "";
+  return new Error(`Could not save this ${item}${reference}.`);
+}
+
 export async function saveDraft(
   fields: DraftFields,
   existing: ProjectDraft | null,
@@ -76,11 +90,9 @@ export async function saveDraft(
     const query = existing
       ? table.update(values).eq("id", id).eq("revision", existing.revision)
       : table.insert({ ...values, id, source_image: originalImages[0] ?? null, source_images: originalImages, original_project_id: original?.id ?? null });
-    const { data, error } = await query.select("*").maybeSingle();
+    const { data, error, status } = await query.select("*").maybeSingle();
     if (data && !error) return data as ProjectDraft;
-    if (error?.code === "23505") throw new Error("That project ID is already in the workspace.");
-    if (!error) throw new Error("Another admin saved changes. Reopen the project and try again.");
-    throw new Error("Could not save the draft. Check the details and try again.");
+    throw draftSaveError(error, status, "project");
   } catch (error) {
     if (uploaded.length) await storage.remove(uploaded);
     throw error;

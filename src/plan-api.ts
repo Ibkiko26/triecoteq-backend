@@ -1,4 +1,4 @@
-import { client, invokeEdge } from "./backend";
+import { client, draftSaveError, invokeEdge } from "./backend";
 import { coverExtensions, frontendWebsite } from "../shared/portfolio";
 import { maxRenders, planBucket, publicRender, type PlanDraft, type PlanFields, type PlanGrant, type PublicPlan } from "../shared/plans";
 
@@ -53,10 +53,8 @@ export async function savePlan(
     const query = current
       ? table.update(values).eq("id", id).eq("revision", current.revision)
       : table.insert({ ...values, id, original_id: original?.id ?? null, original_demo: original?.demoPdf ?? null });
-    const { data, error } = await query.select("*").maybeSingle();
-    if (error?.code === "23505") throw new Error("That plan ID is already in the admin workspace.");
-    if (error) throw new Error("Could not save this plan. Check the fields and file sizes.");
-    if (!data) throw new Error("Another admin updated the plan. Reopen it and try again.");
+    const { data, error, status } = await query.select("*").maybeSingle();
+    if (error || !data) throw draftSaveError(error, status, "plan");
     return data as PlanDraft;
   } catch (error) {
     if (uploaded.length) await client!.storage.from(planBucket).remove(uploaded);

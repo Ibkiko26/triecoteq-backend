@@ -255,6 +255,7 @@ tr:last-child td { border-bottom: 0; }
 .plan-render-strip:empty, .file-state:empty { display: none; }
 .plan-render-strip img { display: block; max-width: 7rem; height: 5rem; object-fit: cover; border-radius: .3rem; }
 [data-clear-images] { justify-self: start; }
+[data-image-selection-status] { white-space: pre-line; overflow-wrap: anywhere; }
 .file-state { color: var(--muted); font-size: .85rem; }
 .issued-link { display: grid; gap: .65rem; padding: .8rem; border: 1px solid var(--line); background: var(--soft); border-radius: .45rem; margin: 1rem 0; }
 .issued-link button { justify-self: start; }
