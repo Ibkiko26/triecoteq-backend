@@ -5,7 +5,7 @@ import {
   type PlanDraft, type PlanFields, type PlanGrant, type PublicPlan
 } from "../shared/plans";
 import {
-  issuePlanLink, livePlans, loadPlanDraft, loadPlans, previewRenders, publishPlan, readGrants,
+  deletePlan, issuePlanLink, livePlans, loadPlanDraft, loadPlans, previewRenders, publishPlan, readGrants,
   redeemPlanLink, revokePlanLink, savePlan, type PlanFiles
 } from "./plan-api";
 import { client } from "./backend";
@@ -29,6 +29,7 @@ function note(root: ParentNode, selector: string, text: string, error = false): 
 }
 
 function state(plan: PlanDraft): string {
+  if (plan.deletion_state === "deleting") return "Deletion pending";
   if (!plan.published_revision) return "Draft";
   return plan.revision === plan.published_revision ? "Published" : "Unpublished changes";
 }
@@ -43,6 +44,7 @@ export function mountPlanAdmin(root: HTMLElement): void {
   let website = true;
   let search = "";
   let request = 0;
+  let deletingPlan = false;
 
   root.innerHTML = `
     <div class="page-heading"><div><h1>Ready-made plans</h1><p>Publish previews to the catalogue and issue drawing access after payment.</p></div>
@@ -71,19 +73,20 @@ export function mountPlanAdmin(root: HTMLElement): void {
     const query = search.toLowerCase().trim();
     const matching = (title: string, id: string) => (title + " " + id).toLowerCase().includes(query);
     const items = website ? published.filter(({ title, id }) => matching(title, id)).map((plan) => ({
-      title: plan.title, planId: plan.id, price: plan.currentPrice, status: "Live",
+      id: plan.id, title: plan.title, planId: plan.id, price: plan.currentPrice, status: "Live",
       edit: `data-import-plan="${escape(plan.id)}"`, access: ""
     })) : plans.filter(({ title, plan_id }) => matching(title, plan_id)).map((plan) => ({
-      title: plan.title, planId: plan.plan_id, price: plan.current_price, status: state(plan),
-      edit: `data-edit-plan="${escape(plan.id)}"`,
-      access: plan.published_drawing_path ? `<button class="link-button" type="button" data-access-plan="${escape(plan.id)}" aria-label="Manage access for ${escape(plan.title)}">Download access</button>` : ""
+      id: plan.id, title: plan.title, planId: plan.plan_id, price: plan.current_price, status: state(plan),
+      edit: plan.deletion_state === "deleting" ? "" : `data-edit-plan="${escape(plan.id)}"`,
+      access: plan.deletion_state !== "deleting" && plan.published_drawing_path ? `<button class="link-button" type="button" data-access-plan="${escape(plan.id)}" aria-label="Manage access for ${escape(plan.title)}">Download access</button>` : ""
     }));
 
     list.innerHTML = items.length ? `<table class="admin-plan-table"><thead><tr>
       <th scope="col">Plan</th><th scope="col">Price</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>${items.map((item) => `<tr><td><strong>${escape(item.title)}</strong><small>${escape(item.planId)}</small></td>
       <td>${formatter.format(item.price)}</td><td><span class="status" data-status="${item.status}">${item.status}</span></td>
-      <td><div class="plan-row-actions"><button class="link-button" type="button" ${item.edit} aria-label="Edit ${escape(item.title)}">Edit</button>${item.access}</div></td></tr>`).join("")}</tbody></table>`
+      <td><div class="row-actions">${item.edit ? `<button class="link-button" type="button" ${item.edit} aria-label="Edit ${escape(item.title)}">Edit</button>` : ""}
+      ${item.access}<button class="link-button delete-button" type="button" data-delete-plan="${escape(item.id)}" aria-label="Delete ${escape(item.title)}">Delete</button></div></td></tr>`).join("")}</tbody></table>`
       : `<div class="empty"><p>${query ? "No plans match your search." : website ? "No published plans to edit." : "Saved drafts will appear here."}</p></div>`;
   }
 
@@ -365,6 +368,28 @@ export function mountPlanAdmin(root: HTMLElement): void {
   list.addEventListener("click", async (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
     if (!button) return;
+    if (button.dataset.deletePlan) {
+      const plan = (website ? published : plans).find(({ id }) => id === button.dataset.deletePlan);
+      if (!plan || deletingPlan ||
+        !window.confirm(`Delete "${plan.title}"? If published, it will also be removed from the public website. Issued download links will keep working until they expire.`)) return;
+
+      deletingPlan = true;
+      button.disabled = true;
+      note(root, "[data-plan-feedback]", "Deleting plan…");
+      try {
+        const { commit } = await deletePlan(plan);
+        if (root.isConnected) await reload(commit ? "Plan deleted. The public website will update after deployment." : "Plan deleted.");
+      } catch (error) {
+        if (root.isConnected) {
+          await reload();
+          note(root, "[data-plan-feedback]", message(error), true);
+        }
+      } finally {
+        deletingPlan = false;
+        button.disabled = false;
+      }
+      return;
+    }
     const existing = plans.find((plan) => plan.id === (button.dataset.editPlan ?? button.dataset.accessPlan));
     if (button.dataset.accessPlan && existing) openAccess(existing);
     else if (existing) openEditor(existing);
@@ -374,6 +399,7 @@ export function mountPlanAdmin(root: HTMLElement): void {
       button.disabled = true;
       try {
         const draft = await loadPlanDraft(original.id);
+        if (draft?.deletion_state === "deleting") throw new Error("This plan is being deleted.");
         if (button.isConnected && !editor.open) openEditor(draft, original);
       } catch (error) {
         if (button.isConnected) note(root, "[data-plan-feedback]", message(error), true);

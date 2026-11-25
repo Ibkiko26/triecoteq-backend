@@ -70,6 +70,12 @@ export function publishPlan(plan: PlanDraft) {
   return invokeEdge<{ commit: string }>("manage-plans", { action: "publish", id: plan.id, revision: plan.revision });
 }
 
+export function deletePlan(plan: PlanDraft | PublicPlan) {
+  return invokeEdge<{ commit: string | null }>("manage-plans", "revision" in plan
+    ? { action: "delete", id: plan.id, revision: plan.revision }
+    : { action: "delete-live", id: plan.id, studioDraftId: plan.studioDraftId });
+}
+
 export async function previewRenders(plan: PlanDraft | null, original: PublicPlan | null): Promise<string[]> {
   const urls = (plan?.original_images ?? original?.images ?? []).filter(publicRender).map((path) => new URL(path, frontendWebsite).href);
   if (plan?.render_paths.length) {

@@ -9,6 +9,9 @@ interface Snapshot {
   [key: string]: unknown;
 }
 
+const deletedListingsFile = "content/deleted-listings.json";
+type DeletedListings = Record<"portfolio" | "plans", string[]>;
+
 export interface TreeEntry {
   path: string;
   mode: "100644";
@@ -133,6 +136,52 @@ export class FrontendRepository {
     return { head, data };
   }
 
+  async removeEntry<T extends { id: string }>(
+    collection: keyof DeletedListings,
+    path: string,
+    label: string,
+    load: (head: string) => Promise<{ entries: T[]; serialize: (entries: T[]) => string }>,
+    match: (entry: T) => boolean,
+    assertCurrent: () => Promise<void>,
+    previousIds: (entry: T) => string[] = () => []
+  ): Promise<string | null> {
+    let original: string | undefined;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await assertCurrent();
+      const head = await this.head();
+      const { entries, serialize } = await load(head);
+      const entry = entries.find(match);
+      if (!entry) return null;
+      const version = JSON.stringify(entry);
+      if (original !== undefined && original !== version) {
+        throw new PublishError(409, "The public listing changed. Refresh before trying again.");
+      }
+      original = version;
+      const deleted = await this.readJson<DeletedListings>(deletedListingsFile, head).catch((error) => {
+        if (error instanceof GithubError && error.status === 404) return { portfolio: [], plans: [] };
+        throw error;
+      });
+      deleted[collection] = [...new Set([...deleted[collection], entry.id, ...previousIds(entry)])];
+      const commit = await this.commitAt(head, [{
+        path, mode: "100644", type: "blob", content: serialize(entries.filter((item) => item !== entry))
+      }, {
+        path: deletedListingsFile, mode: "100644", type: "blob", content: JSON.stringify(deleted, null, 2) + "\n"
+      }], `Delete ${label} ${entry.id}`, assertCurrent);
+      if (commit) return commit;
+    }
+    throw new PublishError(409, "The frontend branch changed during deletion. Try again.");
+  }
+
+  removePortfolioEntry(match: (entry: PublishedProject) => boolean, assertCurrent: () => Promise<void>): Promise<string | null> {
+    return this.removeEntry("portfolio", portfolioFile, "portfolio project", async (head) => {
+      const data = validatePortfolio(await this.readJson<Snapshot>(portfolioFile, head));
+      return {
+        entries: data.portfolioProjects,
+        serialize: (portfolioProjects) => JSON.stringify({ ...data, portfolioProjects, updatedAt: new Date().toISOString() }, null, 2) + "\n"
+      };
+    }, match, assertCurrent, ({ previousIds }) => previousIds ?? []);
+  }
+
   async publish(
     draft: ProjectDraft,
     project: PublishedProject,
@@ -154,6 +203,9 @@ export class FrontendRepository {
           }
           index = original;
         }
+      }
+      if (index < 0 && originalId) {
+        throw new PublishError(409, "The original website entry is gone. Refresh the published portfolio.");
       }
       if (projects.some(({ id }, position) => id === project.id && position !== index)) {
         throw new PublishError(409, "This project ID is already on the website. Import that project to edit it, or choose another ID.");

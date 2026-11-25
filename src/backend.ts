@@ -121,3 +121,9 @@ export async function publishDraft(draft: ProjectDraft): Promise<string> {
   const { commit } = await invokeEdge<{ commit: string }>("publish-portfolio", { action: "publish", id: draft.id, revision: draft.revision });
   return commit;
 }
+
+export function deleteProject(project: ProjectDraft | PublishedProject) {
+  return invokeEdge<{ commit: string | null }>("publish-portfolio", "revision" in project
+    ? { action: "delete", id: project.id, revision: project.revision }
+    : { action: "delete-live", id: project.id, studioDraftId: project.studioDraftId });
+}

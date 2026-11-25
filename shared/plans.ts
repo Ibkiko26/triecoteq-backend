@@ -15,6 +15,7 @@ export interface PublicPlan {
   offer: boolean;
   images: string[];
   demoPdf?: string;
+  studioDraftId?: string;
 }
 
 export interface PlanFields {
@@ -35,6 +36,7 @@ export interface PlanDraft extends PlanFields {
   demo_path: string | null;
   drawing_path: string | null;
   revision: number;
+  deletion_state: "active" | "deleting" | "deleted";
   published_revision: number | null;
   published_drawing_path: string | null;
   published_commit: string | null;

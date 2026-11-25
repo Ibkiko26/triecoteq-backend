@@ -6,7 +6,7 @@ import {
   categories, frontendRepository, frontendWebsite, maxProjectImages, privateImages, projectIdPattern, projectImages, sourceImages,
   type DraftFields, type ProjectDraft, type PublishedProject
 } from "../shared/portfolio";
-import { client, hasPlansAccess, isAdmin, listDrafts, listWebsiteProjects, previewProjectImages, publishDraft, saveDraft } from "./backend";
+import { client, deleteProject, hasPlansAccess, isAdmin, listDrafts, listWebsiteProjects, previewProjectImages, publishDraft, saveDraft } from "./backend";
 
 const app = document.querySelector<HTMLElement>("#app")!;
 const themeStorageKey = "teq-studio-theme";
@@ -27,6 +27,8 @@ let canAccessPlans = false;
 let filter = "";
 let search = "";
 let sessionVersion = 0;
+let loadVersion = 0;
+let deletingProject = false;
 let loginNotice = "";
 let editor: { existing: ProjectDraft | null; dispose: () => void } | null = null;
 
@@ -119,7 +121,8 @@ function setupRequired(): void {
   app.innerHTML = `<main class="setup">${brandHeader()}<h1>Connect the admin</h1><p>Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY, then rebuild the site.</p></main>`;
 }
 
-function statusOf(draft: ProjectDraft): "Draft" | "Published" | "Unpublished changes" {
+function statusOf(draft: ProjectDraft): "Draft" | "Published" | "Unpublished changes" | "Deletion pending" {
+  if (draft.deletion_state === "deleting") return "Deletion pending";
   if (draft.published_revision === null) return "Draft";
   return draft.published_revision === draft.revision ? "Published" : "Unpublished changes";
 }
@@ -131,7 +134,8 @@ function workspaceRows(projects: ProjectDraft[]): string {
       <td>${escape(draft.category)}</td>
       <td>${escape(draft.location)}</td>
       <td><span class="status" data-status="${statusOf(draft)}">${statusOf(draft)}</span></td>
-      <td><button class="link-button" type="button" data-edit="${escape(draft.id)}" aria-label="Edit ${escape(draft.title)}">Edit</button></td>
+      <td><div class="row-actions">${draft.deletion_state === "deleting" ? "" : `<button class="link-button" type="button" data-edit="${escape(draft.id)}" aria-label="Edit ${escape(draft.title)}">Edit</button>`}
+        <button class="link-button delete-button" type="button" data-delete="${escape(draft.id)}" aria-label="Delete ${escape(draft.title)}">Delete</button></div></td>
     </tr>`).join("");
 }
 
@@ -142,7 +146,8 @@ function websiteRows(projects: PublishedProject[]): string {
       <td>${escape(project.category)}</td>
       <td>${escape(project.location)}</td>
       <td><span class="status" data-status="Live">Live</span></td>
-      <td><button class="link-button" type="button" data-import="${escape(project.id)}" aria-label="Edit published project ${escape(project.title)}">Edit</button></td>
+      <td><div class="row-actions"><button class="link-button" type="button" data-import="${escape(project.id)}" aria-label="Edit published project ${escape(project.title)}">Edit</button>
+        <button class="link-button delete-button" type="button" data-delete="${escape(project.id)}" aria-label="Delete published project ${escape(project.title)}">Delete</button></div></td>
     </tr>`).join("");
 }
 
@@ -196,7 +201,7 @@ function showWorkspace(message = ""): void {
             <div class="toolbar">
               <label class="search"><span class="sr-only">Search projects</span><input type="search" data-search placeholder="Search title, ID or location" value="${escape(search)}" /></label>
               ${view === "workspace" ? `<label><span class="sr-only">Filter by status</span><select data-filter>
-                <option value="">All statuses</option>${["Draft", "Unpublished changes", "Published"].map((value) =>
+                <option value="">All statuses</option>${["Draft", "Unpublished changes", "Published", "Deletion pending"].map((value) =>
                   `<option${value === filter ? " selected" : ""}>${value}</option>`).join("")}</select></label>` : ""}
               <button class="button button-secondary" data-refresh type="button">Refresh</button>
             </div>
@@ -219,7 +224,7 @@ function showWorkspace(message = ""): void {
     filter = "";
     search = "";
     showWorkspace();
-    if (view === "website") void reload(false);
+    if (view !== "plans") void reload(false);
   }));
   if (view === "plans") {
     mountPlanAdmin(target("[data-plan-suite]"));
@@ -247,33 +252,63 @@ function showWorkspace(message = ""): void {
       if (!original) return;
       const draft = drafts.find(({ id }) => id === original.studioDraftId)
         ?? drafts.find(({ original_project_id, project_id }) => original_project_id === original.id || project_id === original.id);
+      if (draft?.deletion_state === "deleting") {
+        setStatus("[data-workspace-feedback]", "This project is being deleted.", true);
+        return;
+      }
       openEditor(draft ?? null, draft ? null : original);
+    } else if (button?.dataset.delete) {
+      const project = (view === "website" ? websiteProjects : drafts).find(({ id }) => id === button.dataset.delete);
+      if (project) void removeProject(button, project);
     }
   });
   target<HTMLDialogElement>("[data-editor]").addEventListener("close", clearEditor);
 }
 
-async function reload(silent: boolean): Promise<void> {
+async function removeProject(button: HTMLButtonElement, project: ProjectDraft | PublishedProject): Promise<void> {
+  if (deletingProject || !window.confirm(`Delete "${project.title}"? If published, it will also be removed from the public website.`)) return;
+  deletingProject = true;
+  button.disabled = true;
+  const activeSession = sessionVersion;
+  setStatus("[data-workspace-feedback]", "Deleting project…");
+  try {
+    const { commit } = await deleteProject(project);
+    if (activeSession === sessionVersion && view !== "plans") {
+      await reload(true, commit ? "Project deleted. The public website will update after deployment." : "Project deleted.");
+    }
+  } catch (error) {
+    if (activeSession === sessionVersion && view !== "plans") {
+      await reload(true);
+      if (activeSession === sessionVersion) setStatus("[data-workspace-feedback]", errorMessage(error), true);
+    }
+  } finally {
+    deletingProject = false;
+    button.disabled = false;
+  }
+}
+
+async function reload(silent: boolean, notice = ""): Promise<void> {
   const requested = view;
   const activeSession = sessionVersion;
+  const request = ++loadVersion;
   const button = app.querySelector<HTMLButtonElement>("[data-refresh]");
   if (button) button.disabled = true;
   if (!silent) setStatus("[data-workspace-feedback]", "Loading projects…");
   try {
     if (requested === "website") {
       const loaded = await listWebsiteProjects();
-      if (activeSession === sessionVersion) websiteProjects = loaded;
+      if (activeSession === sessionVersion && request === loadVersion) websiteProjects = loaded;
     } else {
       const loaded = await listDrafts();
-      if (activeSession === sessionVersion) drafts = loaded;
+      if (activeSession === sessionVersion && request === loadVersion) drafts = loaded;
     }
-    if (view === requested && activeSession === sessionVersion && !editor) showWorkspace();
+    if (view === requested && activeSession === sessionVersion && request === loadVersion && !editor) showWorkspace(notice);
   } catch (error) {
-    if (view === requested && activeSession === sessionVersion) {
+    if (view === requested && activeSession === sessionVersion && request === loadVersion) {
       setStatus("[data-workspace-feedback]", errorMessage(error), true);
     }
   } finally {
-    if (button) button.disabled = false;
+    if (button && request === loadVersion) button.disabled = false;
   }
 }
 

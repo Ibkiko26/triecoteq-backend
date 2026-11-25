@@ -3,7 +3,8 @@ import {
   downloadTokenPattern, drawingBytes, maxRenders, planBucket, planIdPattern, plansFile,
   previewBytes, privatePlanPath, publicDemo, publicRender, type PlanDraft, type PublicPlan
 } from "../../../shared/plans.ts";
-import { apiKey, authorise, isImage } from "../publish-portfolio/handler.ts";
+import { deleteDraft, findDraft, privileged, table, withDraftPublication, type Database } from "../_shared/draft-lifecycle.ts";
+import { authorise, isImage } from "../publish-portfolio/handler.ts";
 import { FrontendRepository, PublishError, readPublishedJson, type TreeEntry } from "../publish-portfolio/github.ts";
 
 const headers = {
@@ -12,11 +13,6 @@ const headers = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Cache-Control": "no-store"
 };
-
-interface Database {
-  supabaseUrl: string;
-  caller: Record<string, string>;
-}
 
 interface Purchase {
   draft_id: string;
@@ -32,21 +28,6 @@ const encoder = new TextEncoder();
 
 function reply(status: number, data: unknown): Response {
   return Response.json(data, { status, headers });
-}
-
-function privileged(): Database {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const secret = apiKey("SECRET", "SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !secret) throw new PublishError(503, "Supabase is missing its server API configuration.");
-  const caller: Record<string, string> = { apikey: secret, "Content-Type": "application/json" };
-  if (!secret.startsWith("sb_secret_")) caller.Authorization = `Bearer ${secret}`;
-  return { supabaseUrl, caller };
-}
-
-async function table(db: Database, path: string, method = "GET", body?: unknown): Promise<Response> {
-  return await fetch(`${db.supabaseUrl}/rest/v1/${path}`, {
-    method, headers: db.caller, body: body === undefined ? undefined : JSON.stringify(body)
-  });
 }
 
 async function readDraft(db: Database, id: string): Promise<PlanDraft> {
@@ -159,7 +140,8 @@ async function publicMedia(
 function samePlan(existing: PublicPlan, plan: PublicPlan): boolean {
   return existing.id === plan.id && existing.title === plan.title && existing.description === plan.description &&
     existing.currentPrice === plan.currentPrice && existing.oldPrice === plan.oldPrice && existing.offer === plan.offer &&
-    existing.demoPdf === plan.demoPdf && JSON.stringify(existing.images) === JSON.stringify(plan.images);
+    existing.demoPdf === plan.demoPdf && existing.studioDraftId === plan.studioDraftId &&
+    JSON.stringify(existing.images) === JSON.stringify(plan.images);
 }
 
 async function publish(draft: PlanDraft, db: Database): Promise<string> {
@@ -170,7 +152,7 @@ async function publish(draft: PlanDraft, db: Database): Promise<string> {
   const { images, demoPdf, entries } = await publicMedia(draft, db, github, drawing.sampleHash);
   const plan: PublicPlan = {
     id: draft.plan_id, title: draft.title.trim(), description: draft.description.trim(),
-    currentPrice: draft.current_price, oldPrice: draft.old_price, offer: draft.offer, images,
+    currentPrice: draft.current_price, oldPrice: draft.old_price, offer: draft.offer, images, studioDraftId: draft.id,
     ...(demoPdf ? { demoPdf } : {})
   };
 
@@ -189,14 +171,17 @@ async function publish(draft: PlanDraft, db: Database): Promise<string> {
     if (plan.offer && plans.some((item) => item.offer && item.id !== plan.id)) {
       throw new PublishError(409, "The catalogue already has a promotional plan. Keep one promotional plan at a time.");
     }
+    if (!existing && draft.original_id) {
+      throw new PublishError(409, "The original website listing is gone. Refresh the website catalogue.");
+    }
+    if (existing && (existing.id !== plan.id || (existing.studioDraftId
+      ? existing.studioDraftId !== draft.id : !draft.published_revision && draft.original_id !== existing.id))) {
+      throw new PublishError(409, "This plan ID already exists on the website. Import it to edit that listing.");
+    }
     if (existing && samePlan(existing, plan)) {
       commit = head;
       break;
     }
-    if (existing && (existing.id !== plan.id || (!draft.published_revision && draft.original_id !== existing.id))) {
-      throw new PublishError(409, "This plan ID already exists on the website. Import it to edit that listing.");
-    }
-
     if (existing) plans[index] = plan;
     else plans.unshift(plan);
     commit = await github.commitAt(head, [...entries, {
@@ -215,6 +200,46 @@ async function publish(draft: PlanDraft, db: Database): Promise<string> {
   return commit;
 }
 
+function removePlanEntry(
+  github: FrontendRepository, match: (entry: PublicPlan) => boolean, assertCurrent: () => Promise<void>
+): Promise<string | null> {
+  return github.removeEntry("plans", plansFile, "ready-made plan", async (head) => ({
+    entries: validatePublicPlans(await github.readJson<PublicPlan[]>(plansFile, head)),
+    serialize: (plans) => JSON.stringify(plans, null, 2) + "\n"
+  }), match, assertCurrent);
+}
+
+function deletePlan(github: FrontendRepository, draft: PlanDraft, revision: number): Promise<string | null> {
+  return deleteDraft("plan_drafts", draft, revision, (assertCurrent) => removePlanEntry(github, (plan) =>
+    plan.studioDraftId === draft.id || (!plan.studioDraftId && plan.id === draft.plan_id &&
+      (Boolean(draft.published_revision) || draft.original_id === plan.id)), assertCurrent));
+}
+
+async function deleteWebsitePlan(github: FrontendRepository, id: string, studioDraftId?: string): Promise<string | null> {
+  const plans = validatePublicPlans(await github.readJson<PublicPlan[]>(plansFile, await github.head()));
+  const plan = plans.find((item) => item.id === id);
+  if (plan && plan.studioDraftId !== studioDraftId) {
+    throw new PublishError(409, "The published plan changed. Refresh before deleting.");
+  }
+  const db = privileged();
+  const active = { deletion_state: "neq.deleted" };
+  const draft = studioDraftId
+    ? await findDraft<PlanDraft>(db, "plan_drafts", { ...active, id: `eq.${studioDraftId}` })
+    : await findDraft<PlanDraft>(db, "plan_drafts", {
+      ...active, plan_id: `eq.${id}`, or: `(original_id.eq.${id},published_revision.not.is.null)`
+    });
+  if (draft && (plan || draft.deletion_state === "deleting")) {
+    return deletePlan(github, draft, draft.revision);
+  }
+  if (!plan) return null;
+  const version = JSON.stringify(plan);
+  return removePlanEntry(github, (item) => {
+    if (item.id !== id) return false;
+    if (JSON.stringify(item) !== version) throw new PublishError(409, "The published plan changed. Refresh before deleting.");
+    return true;
+  }, async () => {});
+}
+
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
@@ -228,6 +253,7 @@ function hashToken(token: string): Promise<string> {
 }
 
 async function issueLink(db: Database, draft: PlanDraft, email: string, reference: string) {
+  if (draft.deletion_state !== "active") throw new PublishError(409, "This plan is being deleted.");
   const drawing = draft.published_drawing_path;
   if (!draft.published_revision || !drawing || !privatePlanPath(draft.id, drawing, "drawings")) {
     throw new PublishError(400, "Publish this plan with a private drawing PDF before issuing access.");
@@ -301,14 +327,26 @@ export async function handlePlansRequest(request: Request): Promise<Response> {
       if (!result.ok) throw new PublishError(502, "Could not revoke the download link.");
       return reply(200, { success: true });
     }
+    if (body?.action === "delete-live") {
+      if (typeof body.id !== "string" || body.id.length > 80 || !planIdPattern.test(body.id) ||
+        (body.studioDraftId !== undefined && (typeof body.studioDraftId !== "string" || !draftIdPattern.test(body.studioDraftId)))) {
+        return reply(400, { error: "Choose a published plan to delete." });
+      }
+      return reply(200, { commit: await deleteWebsitePlan(repository(), body.id, body.studioDraftId) });
+    }
 
     if (typeof body?.id !== "string" || !draftIdPattern.test(body.id)) {
       return reply(400, { error: "Choose a saved plan." });
     }
+    if (body.action === "delete") {
+      if (!Number.isSafeInteger(body.revision)) return reply(400, { error: "Choose a saved plan to delete." });
+      const draft = await findDraft<PlanDraft>(privileged(), "plan_drafts", { id: `eq.${body.id}` });
+      return reply(200, { commit: draft ? await deletePlan(repository(), draft, body.revision) : null });
+    }
     const draft = await readDraft(db, body.id);
     if (body.action === "publish") {
       if (body.revision !== draft.revision) return reply(409, { error: "The plan changed. Reopen it before publishing." });
-      return reply(200, { commit: await publish(draft, db) });
+      return reply(200, { commit: await withDraftPublication("plan_drafts", draft, () => publish(draft, db)) });
     }
     if (body.action === "grant" && body.paymentConfirmed === true &&
       typeof body.buyerEmail === "string" && typeof body.orderReference === "string") {

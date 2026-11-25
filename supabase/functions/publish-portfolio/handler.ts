@@ -1,7 +1,8 @@
 import {
   coverBucket, draftIdPattern, maxCoverBytes, maxProjectImages, projectIdPattern,
-  privateImages, publishedData, sourceImages, type ProjectDraft
+  privateImages, publishedData, sourceImages, type ProjectDraft, type PublishedProject
 } from "../../../shared/portfolio.ts";
+import { apiKey, deleteDraft, findDraft, privileged, table, withDraftPublication, type Database } from "../_shared/draft-lifecycle.ts";
 import { FrontendRepository, listPublishedProjects, PublishError, type TreeEntry } from "./github.ts";
 
 const headers = {
@@ -15,14 +16,9 @@ function reply(status: number, data: unknown): Response {
   return Response.json(data, { status, headers });
 }
 
-export function apiKey(kind: "PUBLISHABLE" | "SECRET", fallback: string): string | undefined {
-  const keys = Deno.env.get(`SUPABASE_${kind}_KEYS`);
-  return (keys ? JSON.parse(keys)?.default : undefined) || Deno.env.get(fallback);
-}
-
 export async function authorise(
   request: Request, area: "portfolio" | "plans" = "portfolio"
-): Promise<{ supabaseUrl: string; caller: Record<string, string> }> {
+): Promise<Database> {
   const jwt = request.headers.get("Authorization");
   if (!jwt?.startsWith("Bearer ")) throw new PublishError(401, "Sign in to the portfolio admin.");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -74,20 +70,49 @@ async function readImage(draft: ProjectDraft, path: string, supabaseUrl: string,
   return { path: `admin/portfolio-library/cms-${draft.project_id}-${match[2]}.${match[3]}`, bytes };
 }
 
-async function updatePublication(supabaseUrl: string, secret: string, draft: ProjectDraft, commit: string): Promise<void> {
-  const privileged: Record<string, string> = { apikey: secret, "Content-Type": "application/json" };
-  if (!secret.startsWith("sb_secret_")) privileged.Authorization = `Bearer ${secret}`;
+async function updatePublication(db: Database, draft: ProjectDraft, commit: string): Promise<void> {
   const query = new URLSearchParams({
     id: `eq.${draft.id}`,
     or: `(published_revision.is.null,published_revision.lt.${draft.revision})`
   });
-  const response = await fetch(`${supabaseUrl}/rest/v1/portfolio_drafts?${query}`, {
-    method: "PATCH", headers: privileged,
-    body: JSON.stringify({ published_revision: draft.revision, published_commit: commit })
+  const response = await table(db, `portfolio_drafts?${query}`, "PATCH", {
+    published_revision: draft.revision, published_commit: commit
   });
   if (!response.ok) {
     throw new PublishError(502, "The frontend commit succeeded, but the dashboard status could not update. Publish the same draft again to recover its status.");
   }
+}
+
+function deleteProject(github: FrontendRepository, draft: ProjectDraft, revision: number): Promise<string | null> {
+  const originalId = draft.original_project_id ?? draft.project_id;
+  return deleteDraft("portfolio_drafts", draft, revision, (assertCurrent) => github.removePortfolioEntry((project) =>
+    project.studioDraftId === draft.id || (!project.studioDraftId && project.id === originalId &&
+      (Boolean(draft.published_revision) || draft.source_image === project.image)), assertCurrent));
+}
+
+async function deleteWebsiteProject(github: FrontendRepository, id: string, studioDraftId?: string): Promise<string | null> {
+  const { data } = await github.snapshot();
+  const project = data.portfolioProjects.find((item) => item.id === id);
+  if (project && project.studioDraftId !== studioDraftId) {
+    throw new PublishError(409, "The published project changed. Refresh before deleting.");
+  }
+  const db = privileged();
+  const active = { deletion_state: "neq.deleted" };
+  const draft = studioDraftId
+    ? await findDraft<ProjectDraft>(db, "portfolio_drafts", { ...active, id: `eq.${studioDraftId}` })
+    : project && await findDraft<ProjectDraft>(db, "portfolio_drafts", {
+      ...active, original_project_id: `eq.${id}`, source_image: `eq.${project.image}`
+    });
+  if (draft && (project || draft.deletion_state === "deleting")) {
+    return deleteProject(github, draft, draft.revision);
+  }
+  if (!project) return null;
+  const version = JSON.stringify(project);
+  return github.removePortfolioEntry((item: PublishedProject) => {
+    if (item.id !== id) return false;
+    if (JSON.stringify(item) !== version) throw new PublishError(409, "The published project changed. Refresh before deleting.");
+    return true;
+  }, async () => {});
 }
 
 export async function handlePortfolioRequest(request: Request): Promise<Response> {
@@ -106,35 +131,49 @@ export async function handlePortfolioRequest(request: Request): Promise<Response
         : await listPublishedProjects();
       return reply(200, { projects });
     }
-    if (body?.action !== "publish" || typeof body.id !== "string" || !draftIdPattern.test(body.id) || !Number.isSafeInteger(body.revision)) {
+    if (!["delete", "delete-live", "publish"].includes(body?.action)) {
       throw new PublishError(400, "Choose a saved draft to publish.");
     }
-
     if (!token) throw new PublishError(503, "Set FRONTEND_GITHUB_TOKEN in the Supabase Edge Function secrets.");
     const github = new FrontendRepository(token);
+    if (body.action === "delete-live") {
+      if (typeof body.id !== "string" || body.id.length > 80 || !projectIdPattern.test(body.id) ||
+        (body.studioDraftId !== undefined && (typeof body.studioDraftId !== "string" || !draftIdPattern.test(body.studioDraftId)))) {
+        throw new PublishError(400, "Choose a published project to delete.");
+      }
+      return reply(200, { commit: await deleteWebsiteProject(github, body.id, body.studioDraftId) });
+    }
+    if (typeof body.id !== "string" || !draftIdPattern.test(body.id) || !Number.isSafeInteger(body.revision)) {
+      throw new PublishError(400, "Choose a saved project.");
+    }
+    const db = privileged();
+    if (body.action === "delete") {
+      const draft = await findDraft<ProjectDraft>(db, "portfolio_drafts", { id: `eq.${body.id}` });
+      return reply(200, { commit: draft ? await deleteProject(github, draft, body.revision) : null });
+    }
 
     const draft = await readDraft(supabaseUrl, caller, body.id);
     if (draft.revision !== body.revision) throw new PublishError(409, "Another admin saved changes. Reopen the project before publishing.");
     if (!projectIdPattern.test(draft.project_id)) throw new PublishError(400, "Use a valid project ID.");
-    const secret = apiKey("SECRET", "SUPABASE_SERVICE_ROLE_KEY");
-    if (!secret) throw new PublishError(503, "Supabase is missing its server API key.");
-
-    const images = sourceImages(draft);
-    const uploads = privateImages(draft);
-    if (!images.length && !uploads.length) throw new PublishError(400, "Upload at least one project image before publishing.");
-    if (images.length + uploads.length > maxProjectImages) throw new PublishError(400, "Choose up to six project images.");
-    const media: TreeEntry[] = [];
-    for (const upload of uploads) {
-      const { path, bytes } = await readImage(draft, upload, supabaseUrl, caller);
-      media.push({ path, mode: "100644", type: "blob", sha: await github.blob(bytes) });
-      images.push(path);
-    }
-    const commit = await github.publish(draft, publishedData(draft, images), media, async () => {
-      if ((await readDraft(supabaseUrl, caller, draft.id)).revision !== draft.revision) {
-        throw new PublishError(409, "The draft changed during publishing. Reopen the project and try again.");
+    const commit = await withDraftPublication("portfolio_drafts", draft, async () => {
+      const images = sourceImages(draft);
+      const uploads = privateImages(draft);
+      if (!images.length && !uploads.length) throw new PublishError(400, "Upload at least one project image before publishing.");
+      if (images.length + uploads.length > maxProjectImages) throw new PublishError(400, "Choose up to six project images.");
+      const media: TreeEntry[] = [];
+      for (const upload of uploads) {
+        const { path, bytes } = await readImage(draft, upload, supabaseUrl, caller);
+        media.push({ path, mode: "100644", type: "blob", sha: await github.blob(bytes) });
+        images.push(path);
       }
+      const published = await github.publish(draft, publishedData(draft, images), media, async () => {
+        if ((await readDraft(supabaseUrl, caller, draft.id)).revision !== draft.revision) {
+          throw new PublishError(409, "The draft changed during publishing. Reopen the project and try again.");
+        }
+      });
+      await updatePublication(db, draft, published);
+      return published;
     });
-    await updatePublication(supabaseUrl, secret, draft, commit);
     return reply(200, { commit });
   } catch (error) {
     if (error instanceof PublishError) return reply(error.status, { error: error.message });

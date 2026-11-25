@@ -48,6 +48,7 @@ export interface ProjectDraft extends DraftFields {
   gallery_paths: string[];
   original_project_id: string | null;
   revision: number;
+  deletion_state: "active" | "deleting" | "deleted";
   published_revision: number | null;
   published_commit: string | null;
   updated_at: string;
