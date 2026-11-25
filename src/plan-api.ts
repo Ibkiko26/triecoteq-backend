@@ -1,9 +1,10 @@
 import { client, invokeEdge } from "./backend";
 import { coverExtensions, frontendWebsite } from "../shared/portfolio";
-import { planBucket, publicRender, type PlanDraft, type PlanFields, type PlanGrant, type PublicPlan } from "../shared/plans";
+import { maxRenders, planBucket, publicRender, type PlanDraft, type PlanFields, type PlanGrant, type PublicPlan } from "../shared/plans";
 
 export interface PlanFiles {
   renders: File[];
+  replaceRenders: boolean;
   demo: File | null;
   drawing: File | null;
 }
@@ -34,25 +35,33 @@ export async function savePlan(
   fields: PlanFields, current: PlanDraft | null, original: PublicPlan | null, files: PlanFiles
 ): Promise<PlanDraft> {
   const id = current?.id ?? crypto.randomUUID();
-  const renderPaths = [...(current?.render_paths ?? [])];
-  if (files.renders.length) {
-    renderPaths.length = 0;
-    for (const file of files.renders) renderPaths.push(await upload(id, "renders", file));
+  const replacing = files.replaceRenders && files.renders.length > 0;
+  const originalImages = replacing ? [] : (current?.original_images ?? original?.images ?? []).filter(publicRender);
+  const existingRenders = replacing ? [] : current?.render_paths ?? [];
+  if (files.renders.length && originalImages.length + existingRenders.length + files.renders.length > maxRenders) {
+    throw new Error("Choose up to six render images.");
   }
-  const values = {
-    ...fields, render_paths: renderPaths,
-    demo_path: files.demo ? await upload(id, "demo", files.demo) : current?.demo_path ?? null,
-    drawing_path: files.drawing ? await upload(id, "drawings", files.drawing) : current?.drawing_path ?? null
-  };
-  const table = client!.from("plan_drafts");
-  const query = current
-    ? table.update(values).eq("id", id).eq("revision", current.revision)
-    : table.insert({ ...values, id, original_id: original?.id ?? null, original_images: original?.images ?? [], original_demo: original?.demoPdf ?? null });
-  const { data, error } = await query.select("*").maybeSingle();
-  if (error?.code === "23505") throw new Error("That plan ID is already in the admin workspace.");
-  if (error) throw new Error("Could not save this plan. Check the fields and file sizes.");
-  if (!data) throw new Error("Another admin updated the plan. Reopen it and try again.");
-  return data as PlanDraft;
+  const uploaded: string[] = [];
+  try {
+    for (const file of files.renders) uploaded.push(await upload(id, "renders", file));
+    const values = {
+      ...fields, original_images: originalImages, render_paths: [...existingRenders, ...uploaded],
+      demo_path: files.demo ? await upload(id, "demo", files.demo) : current?.demo_path ?? null,
+      drawing_path: files.drawing ? await upload(id, "drawings", files.drawing) : current?.drawing_path ?? null
+    };
+    const table = client!.from("plan_drafts");
+    const query = current
+      ? table.update(values).eq("id", id).eq("revision", current.revision)
+      : table.insert({ ...values, id, original_id: original?.id ?? null, original_demo: original?.demoPdf ?? null });
+    const { data, error } = await query.select("*").maybeSingle();
+    if (error?.code === "23505") throw new Error("That plan ID is already in the admin workspace.");
+    if (error) throw new Error("Could not save this plan. Check the fields and file sizes.");
+    if (!data) throw new Error("Another admin updated the plan. Reopen it and try again.");
+    return data as PlanDraft;
+  } catch (error) {
+    if (uploaded.length) await client!.storage.from(planBucket).remove(uploaded);
+    throw error;
+  }
 }
 
 export function livePlans() {
@@ -64,11 +73,12 @@ export function publishPlan(plan: PlanDraft) {
 }
 
 export async function previewRenders(plan: PlanDraft | null, original: PublicPlan | null): Promise<string[]> {
+  const urls = (plan?.original_images ?? original?.images ?? []).filter(publicRender).map((path) => new URL(path, frontendWebsite).href);
   if (plan?.render_paths.length) {
     const { data } = await client!.storage.from(planBucket).createSignedUrls(plan.render_paths, 600);
-    return data?.flatMap((item) => item.signedUrl ? [item.signedUrl] : []) ?? [];
+    urls.push(...(data?.flatMap((item) => item.signedUrl ? [item.signedUrl] : []) ?? []));
   }
-  return (plan?.original_images ?? original?.images ?? []).filter(publicRender).map((path) => new URL(path, frontendWebsite).href);
+  return urls;
 }
 
 export async function readGrants(planId: string): Promise<PlanGrant[]> {

@@ -1,8 +1,8 @@
 import {
-  coverBucket, draftIdPattern, maxCoverBytes, projectIdPattern, projectImagePath,
-  publishedData, type ProjectDraft
+  coverBucket, draftIdPattern, maxCoverBytes, maxProjectImages, projectIdPattern,
+  privateImages, publishedData, sourceImages, type ProjectDraft
 } from "../../../shared/portfolio.ts";
-import { FrontendRepository, listPublishedProjects, PublishError } from "./github.ts";
+import { FrontendRepository, listPublishedProjects, PublishError, type TreeEntry } from "./github.ts";
 
 const headers = {
   "Access-Control-Allow-Origin": "*",
@@ -57,28 +57,21 @@ export function isImage(bytes: Uint8Array, ext: string): boolean {
     new TextDecoder().decode(bytes.subarray(8, 12)) === "WEBP";
 }
 
-async function coverFor(draft: ProjectDraft, supabaseUrl: string, caller: Record<string, string>) {
-  if (!draft.cover_path) {
-    if (draft.source_image && projectImagePath(draft.source_image)) {
-      return { image: draft.source_image, bytes: null };
-    }
-    throw new PublishError(400, "Upload a cover image before publishing.");
-  }
-
-  const match = /^([a-f0-9-]{36})\/([a-f0-9-]{36})\.(jpg|png|webp)$/.exec(draft.cover_path);
-  if (!match || match[1] !== draft.id) throw new PublishError(400, "Choose a valid cover image.");
+async function readImage(draft: ProjectDraft, path: string, supabaseUrl: string, caller: Record<string, string>) {
+  const match = /^([a-f0-9-]{36})\/([a-f0-9-]{36})\.(jpg|png|webp)$/.exec(path);
+  if (!match || match[1] !== draft.id) throw new PublishError(400, "Choose a valid project image.");
   const response = await fetch(
-    `${supabaseUrl}/storage/v1/object/authenticated/${coverBucket}/${draft.cover_path}`, { headers: caller }
+    `${supabaseUrl}/storage/v1/object/authenticated/${coverBucket}/${path}`, { headers: caller }
   );
-  if (!response.ok) throw new PublishError(400, "The uploaded cover is missing. Save a new cover before publishing.");
+  if (!response.ok) throw new PublishError(400, "An uploaded project image is missing. Update the images before publishing.");
   if (Number(response.headers.get("content-length")) > maxCoverBytes) {
-    throw new PublishError(400, "Cover images must be 5 MB or smaller.");
+    throw new PublishError(400, "Project images must be 5 MB or smaller.");
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.length > maxCoverBytes || !isImage(bytes, match[3])) {
-    throw new PublishError(400, "Choose a valid JPEG, PNG or WebP cover image of up to 5 MB.");
+    throw new PublishError(400, "Choose JPEG, PNG or WebP project images of up to 5 MB each.");
   }
-  return { image: `admin/portfolio-library/cms-${draft.project_id}-${match[2]}.${match[3]}`, bytes };
+  return { path: `admin/portfolio-library/cms-${draft.project_id}-${match[2]}.${match[3]}`, bytes };
 }
 
 async function updatePublication(supabaseUrl: string, secret: string, draft: ProjectDraft, commit: string): Promise<void> {
@@ -126,8 +119,17 @@ export async function handlePortfolioRequest(request: Request): Promise<Response
     const secret = apiKey("SECRET", "SUPABASE_SERVICE_ROLE_KEY");
     if (!secret) throw new PublishError(503, "Supabase is missing its server API key.");
 
-    const cover = await coverFor(draft, supabaseUrl, caller);
-    const commit = await github.publish(draft, publishedData(draft, cover.image), cover.bytes, async () => {
+    const images = sourceImages(draft);
+    const uploads = privateImages(draft);
+    if (!images.length && !uploads.length) throw new PublishError(400, "Upload at least one project image before publishing.");
+    if (images.length + uploads.length > maxProjectImages) throw new PublishError(400, "Choose up to six project images.");
+    const media: TreeEntry[] = [];
+    for (const upload of uploads) {
+      const { path, bytes } = await readImage(draft, upload, supabaseUrl, caller);
+      media.push({ path, mode: "100644", type: "blob", sha: await github.blob(bytes) });
+      images.push(path);
+    }
+    const commit = await github.publish(draft, publishedData(draft, images), media, async () => {
       if ((await readDraft(supabaseUrl, caller, draft.id)).revision !== draft.revision) {
         throw new PublishError(409, "The draft changed during publishing. Reopen the project and try again.");
       }

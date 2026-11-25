@@ -136,37 +136,43 @@ export class FrontendRepository {
   async publish(
     draft: ProjectDraft,
     project: PublishedProject,
-    cover: Uint8Array | null,
+    media: TreeEntry[],
     assertCurrent: () => Promise<void>
   ): Promise<string> {
-    let coverSha: string | undefined;
-
     for (let attempt = 0; attempt < 3; attempt++) {
       await assertCurrent();
       const { head, data } = await this.snapshot();
-      const index = data.portfolioProjects.findIndex(({ id }) => id === project.id);
-      const existing = index < 0 ? null : data.portfolioProjects[index];
-
-      if (existing && matchesPublished(existing, project)) return head;
-      if (existing && !draft.published_revision && existing.image !== draft.source_image) {
+      const projects = [...data.portfolioProjects];
+      const originalId = draft.original_project_id ?? (draft.source_image || draft.published_revision ? draft.project_id : null);
+      let index = projects.findIndex(({ studioDraftId }) => studioDraftId === draft.id);
+      if (index < 0 && originalId) {
+        const original = projects.findIndex(({ id }) => id === originalId);
+        if (original >= 0) {
+          const item = projects[original];
+          if (item.studioDraftId || (!draft.published_revision && item.image !== draft.source_image)) {
+            throw new PublishError(409, "The original website entry changed. Refresh the published portfolio before trying again.");
+          }
+          index = original;
+        }
+      }
+      if (projects.some(({ id }, position) => id === project.id && position !== index)) {
         throw new PublishError(409, "This project ID is already on the website. Import that project to edit it, or choose another ID.");
       }
-
-      const projects = [...data.portfolioProjects];
       if (index < 0) projects.unshift(project);
-      else projects[index] = { ...projects[index], ...project };
+      else {
+        const existing = projects[index];
+        const previousIds = [...new Set([...(existing.previousIds ?? []), existing.id])].filter((id) => id !== project.id);
+        const next = { ...project, ...(previousIds.length ? { previousIds } : {}) };
+        if (matchesPublished(existing, next)) return head;
+        projects[index] = { ...existing, ...next, previousIds: previousIds.length ? previousIds : undefined };
+      }
 
       const tree: TreeEntry[] = [{
         path: portfolioFile, mode: "100644", type: "blob",
         content: JSON.stringify({ ...data, portfolioProjects: projects, updatedAt: new Date().toISOString() }, null, 2) + "\n"
       }];
 
-      if (cover) {
-        coverSha ??= await this.blob(cover);
-        tree.push({ path: project.image, mode: "100644", type: "blob", sha: coverSha });
-      }
-
-      const commit = await this.commitAt(head, tree, `Publish portfolio project ${project.id}`, assertCurrent);
+      const commit = await this.commitAt(head, [...tree, ...media], `Publish portfolio project ${project.id}`, assertCurrent);
       if (commit) return commit;
     }
     throw new PublishError(409, "The frontend branch changed during publishing. Try again.");

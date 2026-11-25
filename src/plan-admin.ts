@@ -1,6 +1,7 @@
-import { coverExtensions, frontendWebsite } from "../shared/portfolio";
+import { frontendWebsite } from "../shared/portfolio";
+import { bindImagePicker, imagePickerMarkup } from "./image-picker";
 import {
-  downloadTokenPattern, drawingBytes, maxRenders, planIdPattern, previewBytes,
+  downloadTokenPattern, drawingBytes, maxRenders, planIdPattern, previewBytes, publicRender,
   type PlanDraft, type PlanFields, type PlanGrant, type PublicPlan
 } from "../shared/plans";
 import {
@@ -123,7 +124,6 @@ export function mountPlanAdmin(root: HTMLElement): void {
   function openEditor(current: PlanDraft | null = null, original: PublicPlan | null = null): void {
     let saved = current;
     let pending = false;
-    let objectUrls: string[] = [];
     const id = current?.plan_id ?? original?.id ?? "";
     const title = current?.title ?? original?.title ?? "";
     const description = current?.description ?? original?.description ?? "";
@@ -146,9 +146,7 @@ export function mountPlanAdmin(root: HTMLElement): void {
         <label class="plan-check"><input type="checkbox" name="offer" ${offer ? "checked" : ""} /> Promotional plan unlocked with three paid plans</label>
         <label>Description<textarea name="description" rows="4" required maxlength="3000">${escape(description)}</textarea></label>
         <fieldset class="plan-files"><legend>Public previews</legend>
-          <label>Renders<input type="file" name="renders" multiple accept="image/jpeg,image/png,image/webp" />
-            <small>Up to six JPEG, PNG or WebP files of 5 MB each. A new selection replaces the current renders.</small></label>
-          <div class="plan-render-strip" data-render-strip></div>
+          ${imagePickerMarkup("Upload render images", maxRenders)}
           <label><span>Sample PDF <span class="optional">(optional)</span></span><input type="file" name="demo" accept=".pdf,application/pdf" />
             <small>Up to 5 MB. Anyone browsing the catalogue can open this file.</small></label>
           <p class="file-state" data-demo-state></p>
@@ -166,6 +164,7 @@ export function mountPlanAdmin(root: HTMLElement): void {
       </form>`;
 
     const form = editor.querySelector<HTMLFormElement>("[data-plan-form]")!;
+    const gallery = bindImagePicker(form, maxRenders);
     const input = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
     const file = (name: string) => input(name).files?.[0] ?? null;
     function fileState(): void {
@@ -179,19 +178,9 @@ export function mountPlanAdmin(root: HTMLElement): void {
       input("old_price").disabled = promotional;
     }
 
-    function showRenders(urls: string[]): void {
-      const strip = editor.querySelector("[data-render-strip]")!;
-      strip.replaceChildren(...urls.map((url, index) => {
-        const image = new Image();
-        image.src = url;
-        image.alt = `Render ${index + 1}`;
-        return image;
-      }));
-    }
-
-    function revokePreviews(): void {
-      objectUrls.forEach((url) => URL.revokeObjectURL(url));
-      objectUrls = [];
+    function refreshPreviews(): void {
+      const originals = (saved?.original_images ?? original?.images ?? []).filter(publicRender);
+      gallery.setSaved(originals.length + (saved?.render_paths.length ?? 0), previewRenders(saved, original));
     }
 
     let manuallySetId = Boolean(id);
@@ -202,17 +191,9 @@ export function mountPlanAdmin(root: HTMLElement): void {
         .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 80).replace(/-$/, "");
     });
     input("offer").addEventListener("change", updateOffer);
-    input("renders").addEventListener("change", () => {
-      revokePreviews();
-      const selection = Array.from(input("renders").files ?? []);
-      if (selection.length <= maxRenders && selection.every((item) => Object.hasOwn(coverExtensions, item.type))) {
-        objectUrls = selection.map((item) => URL.createObjectURL(item));
-        showRenders(objectUrls);
-      }
-    });
     editor.querySelector("[data-close-plan]")!.addEventListener("click", () => editor.close());
     editor.oncancel = (event) => { if (pending) event.preventDefault(); };
-    editor.onclose = revokePreviews;
+    editor.onclose = gallery.dispose;
     updateOffer();
     fileState();
 
@@ -229,13 +210,12 @@ export function mountPlanAdmin(root: HTMLElement): void {
         current_price: promotional ? 0 : Number(values.get("current_price")),
         old_price: promotional || !previous ? null : Number(previous)
       };
-      const files: PlanFiles = { renders: Array.from(input("renders").files ?? []), demo: file("demo"), drawing: file("drawing") };
+      const files: PlanFiles = { renders: gallery.files, replaceRenders: gallery.replace, demo: file("demo"), drawing: file("drawing") };
       let error = "";
       if (!planIdPattern.test(fields.plan_id)) error = "Enter an ID with letters, numbers and hyphens.";
       else if (fields.old_price !== null && fields.old_price <= fields.current_price) error = "The previous price must exceed the current price.";
-      else if (files.renders.length > maxRenders || files.renders.some((item) =>
-        !Object.hasOwn(coverExtensions, item.type) || !item.size || item.size > previewBytes)) {
-        error = "Choose up to six JPEG, PNG or WebP renders of 5 MB each.";
+      else if (gallery.error || (publish && !gallery.count)) {
+        error = gallery.error || "Choose at least one render before publishing.";
       } else if ([["sample", files.demo, previewBytes], ["drawing", files.drawing, drawingBytes]].some(([, item, limit]) =>
         item instanceof File && (!/\.pdf$/i.test(item.name) || !item.size || item.size > Number(limit)))) {
         error = "Choose a sample PDF up to 5 MB or a drawing PDF up to 25 MB.";
@@ -253,7 +233,8 @@ export function mountPlanAdmin(root: HTMLElement): void {
       note(editor, "[data-plan-editor-feedback]", publish ? "Saving and publishing plan…" : "Saving draft…");
       try {
         saved = await savePlan(fields, saved, original, files);
-        for (const field of ["renders", "demo", "drawing"]) input(field).value = "";
+        for (const field of ["demo", "drawing"]) input(field).value = "";
+        refreshPreviews();
         fileState();
         if (publish) await publishPlan(saved);
         editor.close();
@@ -269,9 +250,7 @@ export function mountPlanAdmin(root: HTMLElement): void {
     });
 
     editor.showModal();
-    void previewRenders(saved, original).then((urls) => {
-      if (editor.open && input("renders").files?.length === 0 && editor.contains(input("renders"))) showRenders(urls);
-    }).catch(() => null);
+    refreshPreviews();
   }
 
   function openAccess(plan: PlanDraft): void {

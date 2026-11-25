@@ -1,6 +1,6 @@
 import { createClient, FunctionsHttpError } from "@supabase/supabase-js";
 import {
-  coverBucket, coverExtensions, frontendWebsite, projectImagePath,
+  coverBucket, coverExtensions, frontendWebsite, maxProjectImages, privateImages, projectImagePath, projectImages, sourceImages,
   type DraftFields, type ProjectDraft, type PublishedProject
 } from "../shared/portfolio";
 
@@ -32,42 +32,59 @@ export async function listDrafts(): Promise<ProjectDraft[]> {
   return data as ProjectDraft[];
 }
 
-export async function loadCover(draft: ProjectDraft): Promise<string> {
-  if (!draft.cover_path) return publicCover(draft.source_image ?? "");
-  const { data } = await client!.storage.from(coverBucket).createSignedUrl(draft.cover_path, 600);
-  return data?.signedUrl ?? "";
+export async function previewProjectImages(draft: ProjectDraft | null, original: PublishedProject | null): Promise<string[]> {
+  if (!draft) return original ? projectImages(original).map(publicCover) : [];
+  const urls = sourceImages(draft).map(publicCover);
+  const paths = privateImages(draft);
+  if (!paths.length) return urls;
+  const { data } = await client!.storage.from(coverBucket).createSignedUrls(paths, 600);
+  return [...urls, ...(data?.flatMap(({ signedUrl }) => signedUrl ? [signedUrl] : []) ?? [])];
 }
 
 export async function saveDraft(
   fields: DraftFields,
   existing: ProjectDraft | null,
   original: PublishedProject | null,
-  file: File | null
+  files: File[],
+  replaceImages: boolean
 ): Promise<ProjectDraft> {
   const id = existing?.id ?? crypto.randomUUID();
-  let cover = existing?.cover_path ?? null;
-  if (file) {
-    const extension = coverExtensions[file.type as keyof typeof coverExtensions];
-    cover = `${id}/${crypto.randomUUID()}.${extension}`;
-    const { error } = await client!.storage.from(coverBucket).upload(cover, file, {
-      contentType: file.type, upsert: false
-    });
-    if (error) throw new Error("The cover image could not upload. Try again.");
+  const originalImages = original ? projectImages(original) : [];
+  const replacing = replaceImages && files.length > 0;
+  const sourceCount = replacing ? 0 : existing ? sourceImages(existing).length : originalImages.length;
+  let cover = replacing ? null : existing?.cover_path ?? null;
+  const gallery = replacing ? [] : [...(existing?.gallery_paths ?? [])];
+  if (sourceCount + Number(Boolean(cover)) + gallery.length + files.length > maxProjectImages) {
+    throw new Error("Choose up to six project images.");
   }
 
-  const table = client!.from("portfolio_drafts");
-  const values = { ...fields, cover_path: cover };
-  const query = existing
-    ? table.update(values).eq("id", id).eq("revision", existing.revision)
-    : table.insert({ ...values, id, source_image: original?.image || null });
-  const { data, error } = await query.select("*").maybeSingle();
-  if (error || !data) {
-    if (file && cover) await client!.storage.from(coverBucket).remove([cover]);
+  const uploaded: string[] = [];
+  const storage = client!.storage.from(coverBucket);
+  try {
+    for (const file of files) {
+      const extension = coverExtensions[file.type as keyof typeof coverExtensions];
+      const path = `${id}/${crypto.randomUUID()}.${extension}`;
+      const { error } = await storage.upload(path, file, { contentType: file.type, upsert: false });
+      if (error) throw new Error(`Could not upload ${file.name}. Try again.`);
+      uploaded.push(path);
+      if (!cover && !sourceCount) cover = path;
+      else gallery.push(path);
+    }
+
+    const table = client!.from("portfolio_drafts");
+    const values = { ...fields, cover_path: cover, gallery_paths: gallery };
+    const query = existing
+      ? table.update(values).eq("id", id).eq("revision", existing.revision)
+      : table.insert({ ...values, id, source_image: originalImages[0] ?? null, source_images: originalImages, original_project_id: original?.id ?? null });
+    const { data, error } = await query.select("*").maybeSingle();
+    if (data && !error) return data as ProjectDraft;
     if (error?.code === "23505") throw new Error("That project ID is already in the workspace.");
     if (!error) throw new Error("Another admin saved changes. Reopen the project and try again.");
     throw new Error("Could not save the draft. Check the details and try again.");
+  } catch (error) {
+    if (uploaded.length) await storage.remove(uploaded);
+    throw error;
   }
-  return data as ProjectDraft;
 }
 
 export async function invokeEdge<T>(name: string, body: object): Promise<T> {

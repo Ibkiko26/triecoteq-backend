@@ -123,9 +123,9 @@ async function publicMedia(
   draft: PlanDraft, db: Database, github: FrontendRepository, fullDrawingHash: string | null
 ): Promise<{ images: string[]; demoPdf?: string; entries: TreeEntry[] }> {
   const entries: TreeEntry[] = [];
-  const images: string[] = [];
+  const images = draft.original_images.filter(publicRender);
 
-  if (draft.render_paths.length > maxRenders) throw new PublishError(400, "Choose up to six public renders.");
+  if (images.length + draft.render_paths.length > maxRenders) throw new PublishError(400, "Choose up to six public renders.");
   for (const path of draft.render_paths) {
     if (!privatePlanPath(draft.id, path, "renders")) throw new PublishError(400, "Choose a valid render image.");
     const bytes = new Uint8Array(await (await planFile(db, path, previewBytes)).arrayBuffer());
@@ -137,7 +137,6 @@ async function publicMedia(
     entries.push({ path: target, mode: "100644", type: "blob", sha: await github.blob(bytes) });
     images.push("/" + target);
   }
-  if (!images.length) images.push(...draft.original_images.filter(publicRender));
   if (!images.length) throw new PublishError(400, "Add at least one public render before publishing.");
 
   let demoPdf = draft.original_demo && publicDemo(draft.original_demo) ? draft.original_demo : undefined;

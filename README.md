@@ -51,9 +51,9 @@ The function verifies the signed-in user’s admin membership before using the G
 
 ### Edit and publish projects
 
-Use **New project** to enter a title, project ID, category, location, year, description and optional price label. Save a draft with a private JPEG, PNG or WebP cover up to 5 MB. To edit a project already on the public site, open **Published portfolio** and select **Edit**.
+Use **New project** to enter a title, project ID, category, location, year, description and optional price label. Upload up to six JPEG, PNG or WebP images of 5 MB each. The first image is the cover. To change a project’s ID or images, open **Published portfolio** and select **Edit**. New images append to the gallery unless you select **Replace existing images**.
 
-**Publish to website** saves the draft and commits the selected project and cover to the frontend repository’s `main` branch. The commit preserves the other portfolio entries and site files. The dashboard links to the commit after it is accepted. Visitors see the change after the frontend deployment finishes.
+**Publish to website** saves the draft and commits the gallery to the frontend repository’s `main` branch. When you change a project ID, publishing updates the same entry. The dashboard links to the commit after it is accepted. Visitors see the change after the frontend deployment finishes.
 
 Publish projects from this workspace so the GitHub-backed portfolio file stays current. The existing enquiry Edge Function uses its own Airtable settings.
 
@@ -67,7 +67,7 @@ supabase functions deploy manage-plans --project-ref <project-ref>
 ```
 
 - Open **Ready-made plans** in the admin navigation. Create a plan or edit an existing listing via **Website catalogue**.
-- Upload up to six public renders and an optional separate sample PDF. Upload the full drawing PDF in **Buyer-only download**. A published plan must have at least one render and a drawing PDF.
+- Upload up to six public renders across one or more selections and an optional separate sample PDF. Select **Replace existing images** if you want the new renders to replace the existing gallery. Upload the full drawing PDF in **Buyer-only download**. A published plan must have at least one render and a drawing PDF.
 - **Publish plan** sends the listing, renders and sample PDF to the frontend repository. The full PDF stays in Supabase’s private `private-plan-files` bucket.
 - The public checkout still sends an enquiry. After verifying payment outside the site, open **Download access**, enter the buyer’s email and payment reference, and issue a link. Copy it to the buyer. The link opens the admin host’s buyer download page and expires after seven days.
 - Admins can revoke an issued link from the plan. A storage URL already prepared by a buyer expires in at most 60 seconds. Existing links continue to point to the drawing revision purchased.

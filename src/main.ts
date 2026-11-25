@@ -1,11 +1,12 @@
 import "./styles.css";
 import studioLogo from "./assets/tri-ecoteq-architects-logo.png";
 import { mountPlanAdmin, showBuyerDownload } from "./plan-admin";
+import { bindImagePicker, imagePickerMarkup } from "./image-picker";
 import {
-  categories, coverExtensions, frontendRepository, frontendWebsite, maxCoverBytes, projectIdPattern,
+  categories, frontendRepository, frontendWebsite, maxProjectImages, privateImages, projectIdPattern, projectImages, sourceImages,
   type DraftFields, type ProjectDraft, type PublishedProject
 } from "../shared/portfolio";
-import { client, hasPlansAccess, isAdmin, listDrafts, listWebsiteProjects, loadCover, publicCover, publishDraft, saveDraft } from "./backend";
+import { client, hasPlansAccess, isAdmin, listDrafts, listWebsiteProjects, previewProjectImages, publishDraft, saveDraft } from "./backend";
 
 const app = document.querySelector<HTMLElement>("#app")!;
 const themeStorageKey = "teq-studio-theme";
@@ -27,7 +28,7 @@ let filter = "";
 let search = "";
 let sessionVersion = 0;
 let loginNotice = "";
-let editor: { existing: ProjectDraft | null; original: PublishedProject | null; file: File | null; preview: string } | null = null;
+let editor: { existing: ProjectDraft | null; dispose: () => void } | null = null;
 
 function escape(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -244,7 +245,8 @@ function showWorkspace(message = ""): void {
     } else if (button?.dataset.import) {
       const original = websiteProjects.find(({ id }) => id === button.dataset.import);
       if (!original) return;
-      const draft = drafts.find(({ project_id }) => project_id === original.id);
+      const draft = drafts.find(({ id }) => id === original.studioDraftId)
+        ?? drafts.find(({ original_project_id, project_id }) => original_project_id === original.id || project_id === original.id);
       openEditor(draft ?? null, draft ? null : original);
     }
   });
@@ -276,7 +278,7 @@ async function reload(silent: boolean): Promise<void> {
 }
 
 function clearEditor(): void {
-  if (editor?.preview.startsWith("blob:")) URL.revokeObjectURL(editor.preview);
+  editor?.dispose();
   editor = null;
 }
 
@@ -289,10 +291,10 @@ function importFields(project: PublishedProject): DraftFields {
 
 function openEditor(existing: ProjectDraft | null = null, original: PublishedProject | null = null): void {
   clearEditor();
-  const state = { existing, original, file: null as File | null, preview: "" };
+  const state = { existing, dispose: () => {} };
   editor = state;
   const fields = existing ?? (original ? importFields(original) : emptyFields);
-  const lockId = Boolean(existing?.published_revision || existing?.source_image || original);
+  const categoryOptions = fields.category && !categories.includes(fields.category) ? [...categories, fields.category] : categories;
   const dialog = target<HTMLDialogElement>("[data-editor]");
   dialog.innerHTML = `
     <div class="editor-heading"><div><h2 id="editor-title">${existing || original ? "Edit project" : "New project"}</h2>
@@ -302,19 +304,14 @@ function openEditor(existing: ProjectDraft | null = null, original: PublishedPro
     <form data-editor-form>
       <div class="editor-grid">
         <label>Project title<input name="title" value="${escape(fields.title)}" maxlength="150" required autofocus /></label>
-        <label>Project ID<input name="project_id" value="${escape(fields.project_id)}" maxlength="80" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" title="Use lowercase letters, numbers and hyphens" aria-describedby="project-id-help" ${lockId ? "readonly" : ""} required /><small id="project-id-help">${lockId ? "The website uses this ID to identify the project." : "Lowercase letters, numbers and hyphens, for example garden-house."}</small></label>
-        <label>Category<input name="category" value="${escape(fields.category)}" list="categories" maxlength="70" required /></label>
+        <label>Project ID<input name="project_id" value="${escape(fields.project_id)}" maxlength="80" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" title="Use lowercase letters, numbers and hyphens" aria-describedby="project-id-help" required /><small id="project-id-help">Use lowercase letters, numbers and hyphens. Publishing applies any ID change to the website.</small></label>
+        <label>Category<select name="category" required><option value="">Choose a category</option>${categoryOptions.map((name) => `<option${name === fields.category ? " selected" : ""}>${escape(name)}</option>`).join("")}</select></label>
         <label>Location<input name="location" value="${escape(fields.location)}" maxlength="150" required /></label>
         <label>Year<input name="year" value="${escape(fields.year)}" inputmode="numeric" pattern="[12][0-9]{3}" maxlength="4" required /></label>
         <label><span>Price label <span class="optional">(optional)</span></span><input name="price_label" value="${escape(fields.price_label)}" maxlength="100" /></label>
       </div>
-      <datalist id="categories">${categories.map((name) => `<option value="${escape(name)}">`).join("")}</datalist>
       <label>Project description<textarea name="description" rows="5" maxlength="3000" required>${escape(fields.description)}</textarea></label>
-      <div class="cover">
-        <div class="cover-preview" data-cover-preview><span>No cover selected</span></div>
-        <label>Cover image<input type="file" name="cover" accept="image/jpeg,image/png,image/webp" aria-describedby="cover-help" />
-          <small id="cover-help">JPEG, PNG or WebP, up to 5 MB.</small></label>
-      </div>
+      <fieldset class="plan-files"><legend>Project gallery</legend>${imagePickerMarkup("Upload images", maxProjectImages)}</fieldset>
       <div class="editor-actions">
         <button class="button button-secondary" name="intent" value="save" type="submit">Save draft</button>
         <button class="button" name="intent" value="publish" type="submit">Publish to website</button>
@@ -323,47 +320,24 @@ function openEditor(existing: ProjectDraft | null = null, original: PublishedPro
     </form>`;
 
   const form = dialog.querySelector<HTMLFormElement>("form")!;
-  const fileInput = form.querySelector<HTMLInputElement>('input[name="cover"]')!;
+  const gallery = bindImagePicker(form, maxProjectImages);
+  state.dispose = gallery.dispose;
   const titleInput = form.querySelector<HTMLInputElement>('input[name="title"]')!;
   const idInput = form.querySelector<HTMLInputElement>('input[name="project_id"]')!;
   let autoId = !idInput.value;
   let pending = false;
 
-  function showPreview(url: string): void {
-    if (editor !== state) return;
-    if (state.preview.startsWith("blob:")) URL.revokeObjectURL(state.preview);
-    state.preview = url;
-    const preview = dialog.querySelector<HTMLElement>("[data-cover-preview]")!;
-    preview.replaceChildren();
-    if (url) {
-      const image = new Image();
-      image.alt = "Project cover preview";
-      image.src = url;
-      preview.append(image);
-    } else {
-      preview.textContent = "No cover selected";
-    }
-  }
-
-  async function restoreCover(): Promise<void> {
-    const url = state.existing ? await loadCover(state.existing) : publicCover(state.original?.image ?? "");
-    if (!state.file) showPreview(url);
+  function refreshPreviews(): void {
+    const count = state.existing ? sourceImages(state.existing).length + privateImages(state.existing).length
+      : original ? projectImages(original).length : 0;
+    gallery.setSaved(count, previewProjectImages(state.existing, original));
   }
 
   idInput.addEventListener("input", () => { autoId = !idInput.value; });
   titleInput.addEventListener("input", () => {
-    if (!autoId || idInput.readOnly) return;
+    if (!autoId) return;
     idInput.value = titleInput.value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
       .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80).replace(/-$/, "");
-  });
-  fileInput.addEventListener("change", () => {
-    const file = fileInput.files?.[0] ?? null;
-    const valid = !file || (Object.hasOwn(coverExtensions, file.type) && file.size > 0 && file.size <= maxCoverBytes);
-    fileInput.setCustomValidity(valid ? "" : "Choose a JPEG, PNG or WebP image of up to 5 MB.");
-    if (!valid) fileInput.reportValidity();
-    state.file = valid ? file : null;
-    if (state.file) showPreview(URL.createObjectURL(state.file));
-    else void restoreCover();
   });
   dialog.querySelector("[data-close]")!.addEventListener("click", () => dialog.close());
   dialog.oncancel = (event) => { if (pending) event.preventDefault(); };
@@ -377,22 +351,21 @@ function openEditor(existing: ProjectDraft | null = null, original: PublishedPro
       setStatus("[data-editor-feedback]", "Enter a project ID using lowercase letters, numbers and hyphens.", true);
       return;
     }
-    if (publish && !state.file && !state.existing?.cover_path && !state.existing?.source_image && !state.original?.image) {
-      setStatus("[data-editor-feedback]", "Choose a cover image before publishing.", true);
+    if (gallery.error || (publish && !gallery.count)) {
+      setStatus("[data-editor-feedback]", gallery.error || "Choose at least one project image before publishing.", true);
       return;
     }
 
     pending = true;
-    const controls = Array.from(dialog.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>("input, button, textarea"));
+    const controls = Array.from(dialog.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement | HTMLSelectElement>("input, button, textarea, select"));
     controls.forEach((control) => { control.disabled = true; });
     setStatus("[data-editor-feedback]", publish ? "Saving and publishing… It may take a moment." : "Saving draft…");
     try {
-      const saved = await saveDraft(details, state.existing, state.original, state.file);
+      const saved = await saveDraft(details, state.existing, original, gallery.files, gallery.replace);
       if (editor !== state) return;
       state.existing = saved;
       drafts = [saved, ...drafts.filter(({ id }) => id !== saved.id)];
-      state.file = null;
-      fileInput.value = "";
+      refreshPreviews();
       if (publish) {
         const commit = await publishDraft(saved);
         if (editor !== state) return;
@@ -423,7 +396,7 @@ function openEditor(existing: ProjectDraft | null = null, original: PublishedPro
     }
   });
   dialog.showModal();
-  void restoreCover();
+  refreshPreviews();
 }
 
 async function updateSession(): Promise<void> {
