@@ -112,8 +112,7 @@ p { margin: 0; }
 .button-secondary { border-color: var(--secondary-border); background: var(--paper); color: var(--control-text); }
 .button-secondary:hover { background: var(--soft); }
 .theme-toggle { gap: .45rem; padding-inline: .75rem; }
-.theme-toggle[aria-pressed="true"] { background: var(--button-fill); border-color: transparent; color: var(--button-text); }
-.theme-toggle[aria-pressed="true"]:hover { background: var(--button-hover); }
+:root[data-theme="light"] .theme-icon-sun, :root[data-theme="dark"] .theme-icon-moon { display: none; }
 button:disabled { cursor: wait; opacity: .58; }
 .link-button { border: 0; padding: .5rem .15rem; min-height: 2.75rem; background: none; color: var(--control-text); font-weight: 650; cursor: pointer; }
 .link-button:hover { text-decoration: underline; }

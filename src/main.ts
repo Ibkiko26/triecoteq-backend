@@ -64,17 +64,25 @@ function readTheme(): Theme | null {
 
 function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
-  app.querySelector("[data-theme-toggle]")?.setAttribute("aria-pressed", String(theme === "dark"));
+  const label = app.querySelector("[data-theme-label]");
+  if (label) label.textContent = themeButtonLabel();
+}
+
+function themeButtonLabel(): string {
+  return document.documentElement.dataset.theme === "dark" ? "Light mode" : "Dark mode";
 }
 
 function themeButton(): string {
-  const isDark = document.documentElement.dataset.theme === "dark";
-  return `<button class="button button-secondary theme-toggle" type="button" data-theme-toggle aria-pressed="${isDark}">
+  return `<button class="button button-secondary theme-toggle" type="button" data-theme-toggle>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-      <path d="M20.9 13.3A9 9 0 0 1 10.7 3.1 9 9 0 1 0 20.9 13.3Z" />
+      <path class="theme-icon-moon" d="M20.9 13.3A9 9 0 0 1 10.7 3.1 9 9 0 1 0 20.9 13.3Z" />
+      <g class="theme-icon-sun">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4" />
+      </g>
     </svg>
-    Dark mode
+    <span data-theme-label>${themeButtonLabel()}</span>
   </button>`;
 }
 
