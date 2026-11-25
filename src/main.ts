@@ -67,31 +67,41 @@ function applyTheme(theme: Theme): void {
   app.querySelector("[data-theme-toggle]")?.setAttribute("aria-pressed", String(theme === "dark"));
 }
 
-function brandHeader(): string {
+function themeButton(): string {
   const isDark = document.documentElement.dataset.theme === "dark";
-  return `<div class="brand-header">
-    <a class="brand" href="${frontendWebsite}" target="_blank" rel="noopener noreferrer">
-      <img class="brand-logo" src="${studioLogo}" alt="" width="620" height="403" />
-      <span>Tri-EcoTeq <small>ARCHITECTS</small></span>
-    </a>
-    <button class="theme-toggle" type="button" data-theme-toggle aria-label="Theme (dark mode)" aria-pressed="${isDark}">Theme</button>
-  </div>`;
+  return `<button class="button button-secondary theme-toggle" type="button" data-theme-toggle aria-pressed="${isDark}">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+      <path d="M20.9 13.3A9 9 0 0 1 10.7 3.1 9 9 0 1 0 20.9 13.3Z" />
+    </svg>
+    Dark mode
+  </button>`;
+}
+
+function studioBrand(): string {
+  return `<a class="brand" href="${frontendWebsite}" target="_blank" rel="noopener noreferrer">
+    <img class="brand-logo" src="${studioLogo}" alt="" width="620" height="403" />
+    <span>Tri-EcoTeq <small>ARCHITECTS</small></span>
+  </a>`;
 }
 
 function showLogin(message = ""): void {
   clearEditor();
   app.innerHTML = `
     <main class="login-layout">
-      <div class="login-brand">${brandHeader()}<div><p class="section-label">Studio workspace</p><h1>Portfolio<br /><em>administration</em></h1></div></div>
-      <section class="login-card" aria-labelledby="login-title">
-        <h2 id="login-title">Admin sign-in</h2>
-        <form data-login>
-          <label>Email address<input type="email" name="email" autocomplete="username" required /></label>
-          <label>Password<input type="password" name="password" autocomplete="current-password" required /></label>
-          <button class="button" type="submit">Sign in</button>
-          <p class="feedback" role="status" data-login-feedback></p>
-        </form>
-      </section>
+      <div class="login-brand">${studioBrand()}<div><p class="section-label">Studio workspace</p><h1>Portfolio<br /><em>administration</em></h1></div></div>
+      <div class="login-panel">
+        ${themeButton()}
+        <section class="login-card" aria-labelledby="login-title">
+          <h2 id="login-title">Admin sign-in</h2>
+          <form data-login>
+            <label>Email address<input type="email" name="email" autocomplete="username" required /></label>
+            <label>Password<input type="password" name="password" autocomplete="current-password" required /></label>
+            <button class="button" type="submit">Sign in</button>
+            <p class="feedback" role="status" data-login-feedback></p>
+          </form>
+        </section>
+      </div>
     </main>`;
 
   if (message) setStatus("[data-login-feedback]", message, true);
@@ -118,7 +128,8 @@ function showLogin(message = ""): void {
 }
 
 function setupRequired(): void {
-  app.innerHTML = `<main class="setup">${brandHeader()}<h1>Connect the admin</h1><p>Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY, then rebuild the site.</p></main>`;
+  app.innerHTML = `<main class="setup"><header class="brand-header">${studioBrand()}${themeButton()}</header>
+    <h1>Connect the admin</h1><p>Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY, then rebuild the site.</p></main>`;
 }
 
 function statusOf(draft: ProjectDraft): "Draft" | "Published" | "Unpublished changes" | "Deletion pending" {
@@ -171,7 +182,7 @@ function showWorkspace(message = ""): void {
     <a class="skip-link" href="#main">Skip to content</a>
     <div class="layout">
       <aside class="sidebar">
-        ${brandHeader()}
+        ${studioBrand()}
         <nav aria-label="Admin navigation">
           <button type="button" data-view="workspace" aria-pressed="${view === "workspace"}">Workspace</button>
           <button type="button" data-view="website" aria-pressed="${view === "website"}">Published portfolio</button>
@@ -183,7 +194,9 @@ function showWorkspace(message = ""): void {
         </div>
       </aside>
       <main id="main" class="main">
-        <header class="topbar"><p>Studio admin</p><span>${escape(email)}</span></header>
+        <header class="topbar">
+          <p>Studio admin</p><span class="topbar-email">${escape(email)}</span>${themeButton()}
+        </header>
         <div class="content">
           ${view === "plans" ? '<div data-plan-suite></div>' : `
           <div class="page-heading">
